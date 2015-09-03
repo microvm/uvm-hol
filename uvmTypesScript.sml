@@ -81,6 +81,18 @@ val scalarType_def = Define`
     | _ => F
 `;
 
+(*
+   maybeVector : (uvmType -> bool) -> uvmType -> bool
+
+   [maybeVector P ty] checks to see if P is true of ty.  Alternatively,
+   if ty is a vector type, it checks to see if P is true of the element
+   type of the vector
+*)
+val maybeVector_def = Define`
+  maybeVector P ty ⇔
+    P ty ∨ case ty of Vector ty0 _ => P ty0 | _ => F
+`;
+
 val (traced_rules, traced_ind, traced_cases) = Hol_reln`
   (∀ty. tracedtype smap (Ref ty)) ∧
   (∀ty. tracedtype smap (Iref ty)) ∧

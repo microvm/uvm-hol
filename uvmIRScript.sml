@@ -39,9 +39,6 @@ val cmpresult_def = Define`
   cmpresult _ = Int 1
 `;
 
-val maybeVector_def = Define`
-  maybeVector P ty ⇔ P ty ∨ ∃ty0 sz. ty = Vector ty0 sz ∧ P ty0
-`;
 
 val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
   (∀iop ity.
