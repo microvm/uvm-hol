@@ -57,8 +57,8 @@ val eqcomparable_def = Define`
   eqcomparable (CPtr _) = T ∧
   eqcomparable (FuncRef _ _) = T ∧
   eqcomparable (CFuncPtr _ _) = T ∧
-  eqcomparable Thread = T ∧
-  eqcomparable Stack = T ∧
+  eqcomparable ThreadRef = T ∧
+  eqcomparable StackRef = T ∧
   eqcomparable _ = F
 `;
 
