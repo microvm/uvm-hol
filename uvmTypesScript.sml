@@ -15,17 +15,17 @@ val _ = Datatype`
    | Ref uvmType
    | Iref uvmType
    | Weakref uvmType
-   | Ptr uvmType
+   | CPtr uvmType
    | Struct structID
    | Array uvmType num
    | Hybrid uvmType uvmType
    | Void
-   | Thread
-   | Stack
+   | ThreadRef
+   | StackRef
    | Tagref64
    | Vector uvmType num
-   | Func uvmType (uvmType list) (* need both? *)
-   | FuncPtr uvmType (uvmType list)
+   | FuncRef uvmType (uvmType list)
+   | CFuncPtr uvmType (uvmType list)
 `
 
 val fpType_def = Define`
@@ -40,8 +40,9 @@ val intType_def = Define`
 `;
 
 val ptrType_def = Define`
-  ptrType (Ptr _) = T ∧
-  ptrType _ = F (* KW wants FuncPtr here *)
+  ptrType (CPtr _) = T ∧
+  ptrType (CFuncPtr _ _) = T ∧
+  ptrType _ = F
 `;
 
 val irefType_def = Define`
@@ -53,10 +54,9 @@ val eqcomparable_def = Define`
   eqcomparable (Int _) = T ∧
   eqcomparable (Ref _) = T ∧
   eqcomparable (Iref _) = T ∧
-  eqcomparable (Weakref _) = T ∧
-  eqcomparable (Ptr _) = T ∧
-  eqcomparable (Func _ _) = T ∧
-  eqcomparable (FuncPtr _ _) = T ∧
+  eqcomparable (CPtr _) = T ∧
+  eqcomparable (FuncRef _ _) = T ∧
+  eqcomparable (CFuncPtr _ _) = T ∧
   eqcomparable Thread = T ∧
   eqcomparable Stack = T ∧
   eqcomparable _ = F
@@ -72,12 +72,12 @@ val scalarType_def = Define`
     | Ref _ => T
     | Iref _ => T
     | Weakref _ => T
-    | Func _ _ => T
-    | FuncPtr _ _ => T
-    | Thread => T
-    | Stack => T
+    | FuncRef _ _ => T
+    | CFuncPtr _ _ => T
+    | ThreadRef => T
+    | StackRef => T
     | Tagref64 => T
-    | Ptr _ => T
+    | CPtr _ => T
     | _ => F
 `;
 
@@ -122,8 +122,8 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
   (∀smap. wftype smap Float) ∧
   (∀smap. wftype smap Double) ∧
   (∀smap. wftype smap Void) ∧
-  (∀smap. wftype smap Thread) ∧
-  (∀smap. wftype smap Stack) ∧
+  (∀smap. wftype smap ThreadRef) ∧
+  (∀smap. wftype smap StackRef) ∧
   (∀smap. wftype smap Tagref64) ∧
   (∀smap. wftype smap Void) ∧
 
@@ -146,19 +146,19 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
      ¬tracedtype (FST smap) ty ∧
      wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
     ⇒
-     wftype smap (Ptr ty)) ∧
+     wftype smap (CPtr ty)) ∧
 
   (∀smap retty argtys.
      wftype smap retty ∧
      (∀ty. ty ∈ set argtys ⇒ wftype smap ty)
     ⇒
-     wftype smap (Func retty argtys)) ∧
+     wftype smap (FuncRef retty argtys)) ∧
 
   (∀smap retty argtys.
      wftype smap retty ∧
      (∀ty. ty ∈ set argtys ⇒ wftype smap ty)
     ⇒
-     wftype smap (FuncPtr retty argtys)) ∧
+     wftype smap (CFuncPtr retty argtys)) ∧
 
   (∀smap sz ty.
      (* 0 < sz ??? ∧ *) wftype smap ty
