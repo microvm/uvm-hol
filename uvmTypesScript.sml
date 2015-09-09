@@ -15,7 +15,7 @@ val _ = Datatype`
    | Ref uvmType
    | Iref uvmType
    | Weakref uvmType
-   | CPtr uvmType
+   | UPtr uvmType
    | Struct structID
    | Array uvmType num
    | Hybrid uvmType uvmType
@@ -25,7 +25,7 @@ val _ = Datatype`
    | Tagref64
    | Vector uvmType num
    | FuncRef uvmType (uvmType list)
-   | CFuncPtr uvmType (uvmType list)
+   | UFuncPtr uvmType (uvmType list)
 `
 
 val fpType_def = Define`
@@ -40,8 +40,8 @@ val intType_def = Define`
 `;
 
 val ptrType_def = Define`
-  ptrType (CPtr _) = T ∧
-  ptrType (CFuncPtr _ _) = T ∧
+  ptrType (UPtr _) = T ∧
+  ptrType (UFuncPtr _ _) = T ∧
   ptrType _ = F
 `;
 
@@ -54,9 +54,9 @@ val eqcomparable_def = Define`
   eqcomparable (Int _) = T ∧
   eqcomparable (Ref _) = T ∧
   eqcomparable (Iref _) = T ∧
-  eqcomparable (CPtr _) = T ∧
+  eqcomparable (UPtr _) = T ∧
   eqcomparable (FuncRef _ _) = T ∧
-  eqcomparable (CFuncPtr _ _) = T ∧
+  eqcomparable (UFuncPtr _ _) = T ∧
   eqcomparable ThreadRef = T ∧
   eqcomparable StackRef = T ∧
   eqcomparable _ = F
@@ -73,11 +73,11 @@ val scalarType_def = Define`
     | Iref _ => T
     | Weakref _ => T
     | FuncRef _ _ => T
-    | CFuncPtr _ _ => T
+    | UFuncPtr _ _ => T
     | ThreadRef => T
     | StackRef => T
     | Tagref64 => T
-    | CPtr _ => T
+    | UPtr _ => T
     | _ => F
 `;
 
@@ -146,7 +146,7 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
      ¬tracedtype (FST smap) ty ∧
      wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
     ⇒
-     wftype smap (CPtr ty)) ∧
+     wftype smap (UPtr ty)) ∧
 
   (∀smap retty argtys.
      wftype smap retty ∧
@@ -158,7 +158,7 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
      wftype smap retty ∧
      (∀ty. ty ∈ set argtys ⇒ wftype smap ty)
     ⇒
-     wftype smap (CFuncPtr retty argtys)) ∧
+     wftype smap (UFuncPtr retty argtys)) ∧
 
   (∀smap sz ty.
      (* 0 < sz ??? ∧ *) wftype smap ty
