@@ -3,6 +3,7 @@ open HolKernel Parse boolLib bossLib;
 val _ = new_theory "uvmTypes";
 
 local open stringTheory finite_mapTheory in end
+open lcsymtacs
 val _ = ParseExtras.tight_equality()
 
 val _ = type_abbrev ("structID", ``:string``)
@@ -116,6 +117,25 @@ val (tracedtype_rules, tracedtype_ind, tracedtype_cases) = Hol_reln`
      tracedtype smap (Struct tag))
 `;
 
+(* A native-safe type can be handed off to the "native" world. *)
+val (native_safe_rules, native_safe_ind, native_safe_cases) = Hol_reln`
+  (∀n. native_safe smap (Int n)) ∧
+  (native_safe smap Float) ∧
+  (native_safe smap Double) ∧
+  (native_safe smap Void) ∧
+  (∀ty n. native_safe smap ty ⇒ native_safe smap (Vector ty n)) ∧
+  (∀ty n. native_safe smap ty ⇒ native_safe smap (Array ty n)) ∧
+  (∀ty. native_safe smap (UPtr ty)) ∧
+  (∀ty argtys. native_safe smap (UFuncPtr ty argtys)) ∧
+  (∀fty vty. native_safe smap fty ∧ native_safe smap vty ⇒
+             native_safe smap (Hybrid fty vty)) ∧
+  (∀tag.
+     (∀ty. ty ∈ set (smap ' tag) ⇒ native_safe smap ty) ∧
+     tag ∈ FDOM smap
+    ⇒
+     native_safe smap (Struct tag))
+`;
+
 
 val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
   (∀vset n.
@@ -184,5 +204,22 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
     ⇒
      wftype smap vset (Struct tag))
 `
+
+(* Note that FuncRefs are not native_safe, but are not traced either, so the
+   reverse implication doesn't hold *)
+val native_safe_nottraced = store_thm(
+  "native_safe_traced",
+  ``∀vset ty.
+      wftype sm vset ty ⇒ native_safe sm ty ⇒ ¬tracedtype sm ty``,
+  Induct_on `wftype` >> rpt conj_tac >> strip_tac >>
+  TRY (simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC) >>
+  TRY (ntac 2 strip_tac >>
+       simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC) >>
+  TRY (ntac 3 strip_tac >>
+       simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC) >>
+  (* struct *)
+  ntac 2 strip_tac >>
+  dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
+  qcase_tac `MEM ty (sm ' tag)` >> Cases_on `MEM ty (sm ' tag)` >> simp[])
 
 val _ = export_theory();
