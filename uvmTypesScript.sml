@@ -118,72 +118,71 @@ val (tracedtype_rules, tracedtype_ind, tracedtype_cases) = Hol_reln`
 
 
 val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
-  (∀smap n.
+  (∀vset n.
       0 < n
      ⇒
-      wftype smap (Int n)) ∧
+      wftype smap vset (Int n)) ∧
 
-  (∀smap. wftype smap Float) ∧
-  (∀smap. wftype smap Double) ∧
-  (∀smap. wftype smap Void) ∧
-  (∀smap. wftype smap ThreadRef) ∧
-  (∀smap. wftype smap StackRef) ∧
-  (∀smap. wftype smap Tagref64) ∧
-  (∀smap. wftype smap Void) ∧
+  (∀vset. wftype smap vset Float) ∧
+  (∀vset. wftype smap vset Double) ∧
+  (∀vset. wftype smap vset Void) ∧
+  (∀vset. wftype smap vset ThreadRef) ∧
+  (∀vset. wftype smap vset StackRef) ∧
+  (∀vset. wftype smap vset Tagref64) ∧
 
-  (∀smap ty.
-     wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
+  (∀vset ty.
+     wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
     ⇒
-     wftype smap (Ref ty)) ∧
+     wftype smap vset (Ref ty)) ∧
 
-  (∀smap ty.
-     wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
+  (∀vset ty.
+     wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
     ⇒
-     wftype smap (Iref ty)) ∧
+     wftype smap vset (Iref ty)) ∧
 
-  (∀smap ty.
-     wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
+  (∀vset ty.
+     wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
     ⇒
-     wftype smap (Weakref ty)) ∧
+     wftype smap vset (Weakref ty)) ∧
 
-  (∀smap ty.
-     ¬tracedtype (FST smap) ty ∧
-     wftype smap ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ SND smap)
+  (∀vset ty.
+     ¬tracedtype smap ty ∧
+     wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
     ⇒
-     wftype smap (UPtr ty)) ∧
+     wftype smap vset (UPtr ty)) ∧
 
-  (∀smap retty argtys.
-     wftype smap retty ∧
-     (∀ty. ty ∈ set argtys ⇒ wftype smap ty)
+  (∀vset retty argtys.
+     wftype smap vset retty ∧
+     (∀ty. ty ∈ set argtys ⇒ wftype smap vset ty)
     ⇒
-     wftype smap (FuncRef retty argtys)) ∧
+     wftype smap vset (FuncRef retty argtys)) ∧
 
-  (∀smap retty argtys.
-     wftype smap retty ∧
-     (∀ty. ty ∈ set argtys ⇒ wftype smap ty)
+  (∀vset retty argtys.
+     wftype smap vset retty ∧
+     (∀ty. ty ∈ set argtys ⇒ wftype smap vset ty)
     ⇒
-     wftype smap (UFuncPtr retty argtys)) ∧
+     wftype smap vset (UFuncPtr retty argtys)) ∧
 
-  (∀smap sz ty.
-     (* 0 < sz ??? ∧ *) wftype smap ty
+  (∀vset sz ty.
+     (* 0 < sz ??? ∧ *) wftype smap vset ty
     ⇒
-     wftype smap (Array ty sz)) ∧
+     wftype smap vset (Array ty sz)) ∧
 
-  (∀smap sz ty.
-     0 < sz ∧ wftype smap ty ∧ scalarType ty
+  (∀vset sz ty.
+     0 < sz ∧ wftype smap vset ty ∧ scalarType ty
     ⇒
-     wftype smap (Vector ty sz)) ∧
+     wftype smap vset (Vector ty sz)) ∧
 
-  (∀smap fixty varty.
-      wftype smap fixty ∧ wftype smap varty
+  (∀vset fixty varty.
+      wftype smap vset fixty ∧ wftype smap vset varty
     ⇒
-      wftype smap (Hybrid fixty varty)) ∧
+      wftype smap vset (Hybrid fixty varty)) ∧
 
-  (∀sm sset tag.
-     tag ∈ FDOM sm ∧
-     (∀ty. MEM ty (sm ' tag) ⇒ wftype (sm, tag INSERT sset) ty)
+  (∀vset tag.
+     tag ∈ FDOM smap ∧
+     (∀ty. MEM ty (smap ' tag) ⇒ wftype smap (tag INSERT vset) ty)
     ⇒
-     wftype (sm, sset) (Struct tag))
+     wftype smap vset (Struct tag))
 `
 
 val _ = export_theory();
