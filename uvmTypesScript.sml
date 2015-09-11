@@ -93,15 +93,19 @@ val maybeVector_def = Define`
     P ty ∨ case ty of Vector ty0 _ => P ty0 | _ => F
 `;
 
-val (traced_rules, traced_ind, traced_cases) = Hol_reln`
+val (tracedtype_rules, tracedtype_ind, tracedtype_cases) = Hol_reln`
   (∀ty. tracedtype smap (Ref ty)) ∧
   (∀ty. tracedtype smap (Iref ty)) ∧
+  (∀ty. tracedtype smap (Weakref ty)) ∧
   (∀sz ty.
      tracedtype smap ty ⇒
      tracedtype smap (Array ty sz)) ∧
   (∀sz ty.
      tracedtype smap ty ⇒
      tracedtype smap (Vector ty sz)) ∧
+  tracedtype smap ThreadRef ∧
+  tracedtype smap StackRef ∧
+  tracedtype smap Tagref64 ∧
   (∀fixty varty.
      tracedtype smap fixty ⇒ tracedtype smap (Hybrid fixty varty)) ∧
   (∀fixty varty.
