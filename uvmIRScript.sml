@@ -7,6 +7,8 @@ val _ = new_theory "uvmIR";
 val _ = type_abbrev ("SSAvar", ``:string``)
 
 val _ = type_abbrev ("label", ``:string``)
+val _ = type_abbrev ("block_label", ``:string``)
+val _ = type_abbrev ("value", ``:num``) (* FIXME *)
 
 val _ = Datatype`
   memoryorder = Relaxed | Atomic (*... *)`
@@ -69,5 +71,67 @@ val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
 `;
 
 
+val _ = type_abbrev("constname", ``:string``)
+val _ = type_abbrev("typename", ``:string``)
+val _ = type_abbrev("fnname", ``:string``)
+val _ = type_abbrev("signame", ``:string``)
+val _ = type_abbrev("label", ``:string``)
+
+val _ = Datatype`
+  calldata = <|
+    methodname : fnname ;
+    args : SSAvar list ;
+    keepalives : SSAvar list
+  |>
+`
+
+val _ = Datatype`
+  expression =
+     Binop binop SSAvar SSAvar
+   | New uvmType
+   | Call calldata
+`
+
+val _ = Datatype`
+  instruction =
+    Assign SSAvar expression
+  | LandingPad (* REMOVE? *)
+`
+
+
+val _ = Datatype`
+  exit_instruction =
+    Return SSAvar (* uvmType not really required *)
+  | RetVoid (* candidate for removal *)
+  | Branch1 block_label (SSAvar list)
+  | Branch2 SSAvar
+            block_label (SSAvar list)
+            block_label (SSAvar list)
+  | Switch SSAvar block_label (SSAvar list)
+                  (value |-> (block_label # SSAvar list))
+  | Throw SSAvar
+  | ExnInstruction instruction
+                   block_label (SSAvar list)
+                   block_label (SSAvar list)
+  | TailCall fnname (SSAvar list)
+`
+
+
+val _ = Datatype`
+  bblock = <|
+    args : (SSAvar # uvmType) list ;
+    body : instruction list ;
+    exit : exit_instruction
+  |>
+`
+
+
+val _ = Datatype`
+  declaration =
+    ConstDecl constname uvmType value
+  | TypeDef typename uvmType
+  | FunctionSignature signame uvmType (uvmType list)
+  | FuncDef fnname signame label (label |-> bblock)
+`
 
 val _ = export_theory();
