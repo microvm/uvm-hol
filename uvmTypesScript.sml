@@ -184,7 +184,7 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
      wftype smap vset (UFuncPtr retty argtys)) ∧
 
   (∀vset sz ty.
-     (* 0 < sz ??? ∧ *) wftype smap vset ty
+     0 < sz ∧ wftype smap vset ty
     ⇒
      wftype smap vset (Array ty sz)) ∧
 
@@ -199,7 +199,7 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
       wftype smap vset (Hybrid fixty varty)) ∧
 
   (∀vset tag.
-     tag ∈ FDOM smap ∧
+     tag ∈ FDOM smap ∧ smap ' tag ≠ [] ∧
      (∀ty. MEM ty (smap ' tag) ⇒ wftype smap (tag INSERT vset) ty)
     ⇒
      wftype smap vset (Struct tag))
