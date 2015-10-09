@@ -101,7 +101,6 @@ val _ = Datatype`
 val _ = Datatype`
   exit_instruction =
     Return SSAvar (* uvmType not really required *)
-  | RetVoid (* candidate for removal *)
   | Branch1 block_label (SSAvar list)
   | Branch2 SSAvar
             block_label (SSAvar list)
