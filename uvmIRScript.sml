@@ -89,6 +89,7 @@ val _ = Datatype`
   expression =
      Binop binop SSAvar SSAvar
    | New uvmType
+   | NewHybrid uvmType num (* can the num be zero? *)
    | Call calldata
 `
 
