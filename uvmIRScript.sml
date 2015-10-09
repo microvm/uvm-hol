@@ -95,7 +95,6 @@ val _ = Datatype`
 val _ = Datatype`
   instruction =
     Assign SSAvar expression
-  | LandingPad (* REMOVE? *)
 `
 
 
