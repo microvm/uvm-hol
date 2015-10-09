@@ -9,6 +9,10 @@ val _ = ParseExtras.tight_equality()
 val _ = type_abbrev ("structID", ``:string``)
 
 val _ = Datatype`
+  machine = <| ptrsize : num ; floatsize : num ; doublesize : num  |>
+`;
+
+val _ = Datatype`
   uvmType =
      Int num
    | Float
@@ -221,5 +225,134 @@ val native_safe_nottraced = store_thm(
   ntac 2 strip_tac >>
   dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
   qcase_tac `MEM ty (sm ' tag)` >> Cases_on `MEM ty (sm ' tag)` >> simp[])
+
+(* ----------------------------------------------------------------------
+
+    canconvert pair
+
+   ---------------------------------------------------------------------- *)
+
+val _ = Datatype`
+  convtype =
+  	TRUNC | ZEXT	| SEXT
+      | FPTRUNC | FPEXT | FPTOUI | FPTOSI | UITOFP | SITOFP
+      | BITCAST | REFCAST | PTRCAST
+`
+
+(* canconvert M convtype (src : uvmType) (tgt : uvmType) *)
+
+val (canconvert_rules, canconvert_ind, canconvert_cases) = Hol_reln`
+  (∀m n.
+     m ≤ n
+    ⇒
+     canconvert M Smap TRUNC (Int n) (Int m))
+
+    ∧
+
+  (∀m n.
+    m ≤ n
+   ⇒
+    canconvert M Smap ZEXT (Int m) (Int n))
+
+    ∧
+
+  (∀m n.
+    m ≤ n
+   ⇒
+    canconvert M Smap SEXT (Int m) (Int n))
+
+    ∧
+
+  canconvert M Smap FPTRUNC Double Float
+
+    ∧
+
+  canconvert M Smap FPEXT Float Double
+
+    ∧
+
+  (∀ty n.
+     fpType ty
+    ⇒
+     canconvert M Smap FPTOUI ty (Int n))
+
+    ∧
+
+  (∀ty n.
+     fpType ty
+    ⇒
+     canconvert M Smap FPTOSI ty (Int n))
+
+    ∧
+
+  (∀ty n.
+     fpType ty
+    ⇒
+     canconvert M Smap UITOFP (Int n) ty)
+
+    ∧
+
+  (∀ty n.
+     fpType ty
+    ⇒
+     canconvert M Smap SITOFP (Int n) ty)
+
+    ∧
+
+     canconvert M Smap BITCAST (Int M.floatsize) Float
+
+    ∧
+
+     canconvert M Smap BITCAST Float (Int M.floatsize)
+
+    ∧
+
+     canconvert M Smap BITCAST (Int M.doublesize) Double
+
+    ∧
+
+     canconvert M Smap BITCAST Double (Int M.doublesize)
+
+
+    ∧
+
+  (* ptrcast cases *)
+  (∀n ty.
+     M.ptrsize = n
+    ⇒
+     canconvert M Smap BITCAST (Int n) (UPtr ty))
+
+    ∧
+
+  (∀n ty.
+     M.ptrsize = n (* tell KW *)
+    ⇒
+     canconvert M Smap BITCAST (UPtr ty) (Int n))
+
+    ∧
+
+  (* refcast cases *)
+  (∀ty.
+     canconvert M Smap BITCAST (Ref Void) (Ref ty))
+
+    ∧
+
+  (∀ty.
+     canconvert M Smap BITCAST (Ref ty) (Ref Void))
+
+    ∧
+
+  (∀ty.
+     canconvert M Smap BITCAST (Ref Void) (Ref ty))
+
+    ∧
+
+  (∀tag1 tag2.
+     tag1 ∈ FDOM Smap ∧ tag2 ∈ FDOM Smap ∧
+     (Smap ' tag1 <<= Smap ' tag2 ∨ Smap ' tag2 <<= Smap ' tag1)
+    ⇒
+     canconvert M Smap BITCAST (Ref (Struct tag1)) (Ref (Struct tag2)))
+`
+
 
 val _ = export_theory();
