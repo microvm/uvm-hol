@@ -4,14 +4,17 @@ open uvmTypesTheory
 
 val _ = new_theory "uvmIR";
 
-val _ = type_abbrev ("SSAvar", ``:string``)
+val _ = type_abbrev ("SSAVar", ``:string``)
 
 val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
 val _ = type_abbrev ("value", ``:num``) (* FIXME *)
+val _ = type_abbrev ("trapData", ``:num``)
 
 val _ = Datatype`
-  memoryorder = Relaxed | Atomic (*... *)`
+  memoryorder =
+   NOT_ATOMIC | RELAXED | CONSUME | ACQUIRE | RELEASE | ACQ_REL | SEQ_CST
+`;
 
 val _ = Datatype`
   binop = Add | Sub | Mul | Sdiv | Srem | Udiv | Urem | Shl | LShr | AShr
@@ -78,49 +81,126 @@ val _ = type_abbrev("signame", ``:string``)
 val _ = type_abbrev("label", ``:string``)
 
 val _ = Datatype`
+  destarg =
+    Normal SSAVar    (* i.e., something already in scope *)
+  | FreshBound num   (* index to resumed value list - may not be any if, for
+                        example, the statement is Return or Tailcall, but if the
+                        statement is a call, the concrete syntax might be something
+                        like
+
+                           CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
+                     *)
+`;
+
+val _ = type_abbrev("destination", ``:block_label # (destarg list)``)
+
+val _ = Datatype`
+  termination_data = <|
+    normaldest : destination ;
+    exceptionaldest : destination
+  |>
+`;
+
+val _ = type_abbrev("ffitype", ``:string``)
+
+val _ = Datatype`
+  callconvention = Mu | Foreign ffitype
+`
+
+val _ = Datatype`
   calldata = <|
-    methodname : fnname ;
-    args : SSAvar list ;
-    keepalives : SSAvar list
+    methodname : SSAVar ;  (* allowing for indirect calls *)
+    args : SSAVar list ;
+    convention : callconvention
   |>
 `
 
 val _ = Datatype`
+  AtomicRMW_Op =
+    XCHG | ADD | SUB | AND | NAND | OR | XOR | MAX | MIN | UMAX | UMIN
+`
+
+val _ = Datatype`
   expression =
-     Binop binop SSAvar SSAvar
+     Binop binop SSAVar SSAVar
+
+     (* memory operations *)
+   | Load bool (* T for iref, F for ptr *) SSAVar (* memory location *)
+          memoryorder
+
+   | Store bool (* T for iref, F for ptr *)
+           SSAVar (* memory location *)
+           SSAVar (* value to be written *)
+           memoryorder
+   | CMPXCHG bool (* T for iref, F for ptr *)
+             bool (* T for strong, F for weak *)
+             memoryorder (* success order *)
+             memoryorder (* failure order *)
+             SSAVar (* memory location *)
+             SSAVar (* expected value *)
+             SSAVar (* desired value *)
+   | ATOMICRMW bool (* T for iref, F for ptr *)
+               memoryorder
+               AtomicRMW_Op
+               SSAVar (* memory location *)
+               SSAVar (* operand for op *)
+   | FENCE memoryorder
+
+     (* allocation operations *)
    | New uvmType
-   | NewHybrid uvmType num (* can the num be zero? *)
+   | AllocA uvmType
+   | NewHybrid uvmType SSAVar (* num can be zero; will cause u.b., or raise exn if
+                              get variable part iref call is made on return value *)
+   | AllocAHybrid uvmType SSAVar
+   | NewStack SSAVar (* variable contains method *)
+   | NewThread SSAVar (* stack id *) (SSAVar list) (* args for resumption point *)
+
+
    | Call calldata
+   | Swapstack SSAVar (* stackID *) (SSAVar list)
+   | PushFrame signame (* stackID *) SSAVar (* method *) SSAVar
+   | PopFrame SSAVar (* stackID *)
+   | Trap trapData
 `
 
 val _ = Datatype`
   instruction =
-    Assign SSAvar expression
+    Assign (SSAVar list) expression
 `
 
+val _ = type_abbrev("wpid", ``:num``)
 
 val _ = Datatype`
-  exit_instruction =
-    Return SSAvar (* uvmType not really required *)
-  | Branch1 block_label (SSAvar list)
-  | Branch2 SSAvar
-            block_label (SSAvar list)
-            block_label (SSAvar list)
-  | Switch SSAvar block_label (SSAvar list)
-                  (value |-> (block_label # SSAvar list))
-  | Throw SSAvar
-  | ExnInstruction instruction
-                   block_label (SSAvar list)
-                   block_label (SSAvar list)
-  | TailCall fnname (SSAvar list)
-`
+  terminst =
+      Return (SSAVar list)
+    | ThreadExit
+    | Throw (SSAVar list)
+    | TailCall calldata
+    | Branch1 destination
+    | Branch2 SSAVar destination destination
+    | Watchpoint wpid destination termination_data
+    | Switch SSAVar destination (value |-> destination)
+    | ExnInstruction expression termination_data
+`;
 
+(* Note, when wrapping some expressions, it's possible that there will be an
+   implicit requirement on the implementation to handle errors more gracefully.
+   For example,
+     if you wrap a Div operation, you have to handle division by zero somehow
+     if you don't wrap it, you can let demons fly out of your nose.
+   More complicatedly,
+     if you wrap a swapstack, you might expect/rely on the implemention to give an
+     exception if the stack is active ("bound to a thread" / "running" / .. ?)
+     TBD - preliminary discussion suggests this WON'T be done, as clients can
+     arrange concurrency protection for this sort of thing themselves
+*)
 
 val _ = Datatype`
   bblock = <|
-    args : (SSAvar # uvmType) list ;
+    args : (SSAVar # uvmType) list ;
     body : instruction list ;
-    exit : exit_instruction
+    exit : terminst ;
+    keepalives : SSAVar list
   |>
 `
 
