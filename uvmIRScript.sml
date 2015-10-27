@@ -156,11 +156,8 @@ val _ = Datatype`
    | NewThread SSAVar (* stack id *) (SSAVar list) (* args for resumption point *)
 
 
-   | Call calldata
-   | Swapstack SSAVar (* stackID *) (SSAVar list)
    | PushFrame signame (* stackID *) SSAVar (* method *) SSAVar
    | PopFrame SSAVar (* stackID *)
-   | Trap trapData
 `
 
 val _ = Datatype`
@@ -178,7 +175,10 @@ val _ = Datatype`
     | TailCall calldata
     | Branch1 destination
     | Branch2 SSAVar destination destination
-    | Watchpoint wpid destination termination_data
+    | Watchpoint ((wpid # destination) option) termination_data
+    | WPBranch wpid destination destination
+    | Call calldata destination destination
+    | Swapstack SSAVar (* stackID *) (SSAVar list) destination destination
     | Switch SSAVar destination (value |-> destination)
     | ExnInstruction expression termination_data
 `;
