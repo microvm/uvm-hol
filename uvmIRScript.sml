@@ -154,6 +154,7 @@ val _ = Datatype`
    | AllocAHybrid uvmType SSAVar
    | NewStack SSAVar (* variable contains method *)
    | NewThread SSAVar (* stack id *) (SSAVar list) (* args for resumption point *)
+   | NewThreadExn SSAVar (* stack id *) SSAVar (* exception value *)
 
 
    | PushFrame signame (* stackID *) SSAVar (* method *) SSAVar
