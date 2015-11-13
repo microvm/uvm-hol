@@ -78,6 +78,9 @@ val TSBIND_def = Define`
       | Blocked => Blocked
 `;
 
+val _ = overload_on ("monad_bind", ``TSBIND``)
+val _ = overload_on ("monad_unitbind", ``λm1 m2. TSBIND m1 (K m2)``)
+
 val TSDIE_def = Define`TSDIE : α TSM = λts. Abort`
 val TSBLOCKED_def = Define`TSBLOCKED : α TSM = λts. Blocked`
 
@@ -115,32 +118,67 @@ val readVar_def = Define`
     od
 `
 
+val evalbop_def = Define`
+  evalbop bop v1 v2 : value list TSM =
+   case bop of
+     Add => return [v1 + v2]
+   | Sdiv => if v2 ≠ 0 then return [v1 DIV v2] else TSDIE
+`;
+
 val eval_exp_def = Define`
-  eval_exp (e : expression) : (value list) TSM =
-    let cf = ts.curframe in
+  eval_exp (e : expression) : value list TSM =
       case e of
         Binop bop v1 v2 =>
-          let val1 = THE (FAPPLY cf.ssavars v1) in
-          let val2 = THE (FAPPLY cf.ssavars v2)
-          in
-            (case evalbop bop val1 val2 of
-                NONE => Abort
-              | SOME result => (result, []))
-      | Load mtype destvar morder =>
-
-
-
-
-'a memory_monad : memoryOp list -> ('a * memoryOp list) option
-
-val exec_inst_def = Define`
-  exec_inst ts0 inst =
-    case inst of
-      Assign vtuple exp =>
-        if ¬expr_ready ts0 exp then Blocked
-        else bind vtuple (eval_exp ts0 exp)
+          do
+            val1 <- readVar v1 ;
+            val2 <- readVar v2 ;
+            evalbop bop val1 val2
+          od
 `
 
+val valbind_def = Define`
+  valbind vars values : threadState TSM =
+    if LENGTH vars ≠ LENGTH values then TSDIE
+    else
+      do
+        ts0 <- TSGET ;
+        return
+          (FOLDL (λts (var,value).
+                    ts with curframe updated_by
+                      (λcf.
+                         cf with ssavars updated_by
+                           (λfm. fm |+ (var, SOME value))))
+                 ts0
+                 (ZIP(vars,values)))
+      od
+`;
+
+val exec_inst_def = Define`
+  exec_inst inst : threadState TSM =
+    case inst of
+      Assign vtuple exp =>
+        do
+           values <- eval_exp exp ;
+           valbind vtuple values
+        od
+`
+
+(* Test:
+
+Define`ts = <| curframe :=
+               <| ssavars := FEMPTY |+ ("y", SOME 1) |+ ("z", SOME 2)
+                                    |+ ("p", NONE) |>
+            |> `;
+
+EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "y")) ts``;
+EVAL ``exec_inst (Assign ["x"; "y"] (Binop Add "z" "y")) ts``;
+EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "u")) ts``;
+EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "p")) ts``;
+
+*)
+
+
+(*
 val ts_step_def = Define`
   ts_step codemap (ts0 : threadState) : tsstep_result =
     case FLOOKUP ts0.curframe.code ts0.curblock of
@@ -151,6 +189,6 @@ val ts_step_def = Define`
       else exec_inst ts0 (EL ts0.offset bb.body)
 `;
 
-
+*)
 
 val _ = export_theory();
