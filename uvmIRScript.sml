@@ -125,13 +125,7 @@ val _ = Datatype`
      Binop binop SSAVar SSAVar
 
      (* memory operations *)
-   | Load bool (* T for iref, F for ptr *) SSAVar (* memory location *)
-          memoryorder
 
-   | Store bool (* T for iref, F for ptr *)
-           SSAVar (* memory location *)
-           SSAVar (* value to be written *)
-           memoryorder
    | CMPXCHG bool (* T for iref, F for ptr *)
              bool (* T for strong, F for weak *)
              memoryorder (* success order *)
@@ -164,6 +158,14 @@ val _ = Datatype`
 val _ = Datatype`
   instruction =
     Assign (SSAVar list) expression
+  | Load SSAVar  (* destination register *)
+         bool (* T for iref, F for ptr *)
+         SSAVar (* memory location *)
+         memoryorder
+  | Store SSAVar (* value to be written *)
+          bool (* T for iref, F for ptr *)
+          SSAVar (* memory location *)
+          memoryorder
 `
 
 val _ = type_abbrev("wpid", ``:num``)
