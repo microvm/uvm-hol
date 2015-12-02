@@ -23,7 +23,7 @@ val _ = Datatype`
    | UPtr uvmType
    | Struct structID
    | Array uvmType num
-   | Hybrid uvmType uvmType
+   | Hybrid (uvmType list) uvmType
    | Void
    | ThreadRef
    | StackRef

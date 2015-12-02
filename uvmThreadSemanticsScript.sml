@@ -8,11 +8,26 @@ val _ = new_theory "uvmThreadSemantics";
 val _ = type_abbrev("tid", ``:num``)
 val _ = type_abbrev("addr", ``:num``)  (* non-local memory addresses *)
 
+val _ = Datatype`
+   value =
+     Int num int
+   | IRef uvmType addr
+   | FloatV float32
+   | DoubleV float64
+   (* not sure if these are storable-in-register values
+   | StructV (value list)
+   | ArrayV (value list)
+   | Hybrid (value list) (value list) *)
+   | VectorV (value list)
+   | FuncRefV addr
+   | UFuncRefV addr
+`;
+
 
 val _ = Datatype`
   frame = <|
     function : fnname ;
-    ssavars : SSAVar |-> value option ;
+    ssavars : SSAVar |-> value option # memreqid set ;
     code : block_label |-> bblock
   |>`
 
@@ -191,12 +206,12 @@ val exec_inst_def = Define`
            values <- eval_exp exp ;
            valbind vtuple values
         od
-    | Load destvar b srcvar morder =>
+    | Load destvar srcvar morder =>
         do
            a <- readVar srcvar ;
            TSLOAD destvar a morder
         od
-    | Store srcvar b destvar morder =>
+    | Store srcvar destvar morder =>
         do
            v <- readVar srcvar ;
            a <- readVar destvar ;

@@ -1,0 +1,162 @@
+# High-Level Operational Semantics
+
+Overall system is a
+- collection of threads
+- a memory
+   - incoming message buffers (not necessarily worked on in FIFO-order)
+   - map from addresses to values
+- client
+- ??
+
+
+## Transitions
+
+0. Creating a thread:
+
+    (ts,mem)
+
+       --[new thread(stk)]-->
+
+    (ts ∪ {newthread(stack)}, mem’)
+
+   where mem’ possibly has a threadref in it corresponding to the new thread.
+
+1. Reading from memory:
+
+    Hypothesis:
+
+      ts1 does a load of addr with memorder
+
+    (ts,mem) --[read(addr,memorder)]--> (ts,mem’)
+
+      where mem’ has enqueued the read message onto the memory’s incoming messages queue
+
+    Similarly for write
+
+2. Memory deals with incoming message set (constraints apply)
+
+   Picks a read message, decides what value to associate with that address, updates threadstate of receiver appropriately.
+
+     (ts,mem) --> (ts’,mem)
+
+
+## Desired scenarios
+
+1.  (a) Thread A writes 10 to X.
+    (b) Thread B writes 20 to X.
+    (c) Thread A reads from X.
+
+   Want to see A reading either 10 or 20.   Possible because all three messages get into memory queue; simple non-determinism will allow (b) and (c) to permute, giving desired outcomes.
+
+2. X initially 0
+   (a) Thread A writes 10 to X.
+   (b) Thread B reads X.
+   (c) Thread C reads X.
+
+   Possible Outcomes:
+   - B, C read 0
+   - B reads 0, C reads 10, and vice versa
+   - B, C read 10
+
+3. X initially 0
+   (a) Thread A writes 10
+   (b) Thread B writes 20
+   (c) Thread C reads 10
+   (d) Thread C reads 20
+   (e) Thread D reads 20
+   (f) Thread D reads 10
+
+   Memory’s incoming queue gets to be
+
+     { (A, write(X,10)), (B, write(X,20)),
+       (C, read(X), t=1), (C,read(X), t=2),
+       (D, read(X), t=1), (D, read(X), t=2) }
+
+   evolves to
+
+     { (A, write(X,10)), (B, write(X,20)),
+       (C, read(X), t=2),
+       (D, read(X), t=1), (D, read(X), t=2) }  +  { send(C,X=10) }
+
+   Alternatively:
+
+    { X:  0 <- - - w (A, 10) --- r(A)
+          |\
+          | \
+          |  w(B,20)
+          |    \
+          |     \
+          +------ r(C)
+          |
+          |
+          +--- r(C)
+          |
+          +--- r(D)
+          |
+          |
+          +--- r(D)  }   (links are “Must happen after” relation)
+
+   A read can pick up on a write in the graph subject to
+   - it cannot pick up a write that is masked
+
+
+
+     s0:
+
+        0 ------- w(A, 10)
+         \
+          \
+           -----  r(B)
+
+   evolves to
+
+     s1:
+
+       0 ---- w(A,10) -- completed_read(B, 10)
+
+   i. receives dependent write from B
+
+      s1_1: 0 --- w(A,10) -- completed_read(B,10) --- w(B,20)
+
+
+   ii. received (non-dependent) write from B
+
+       s1_2: 0 ---- w(A,10) -- completed_read(B, 10)
+              \
+               \
+                -- w(B,20)
+
+   iii.
+
+     s0_1
+
+        0 ------- w(A, 10)
+        | \
+        |  \
+        |   -----  r(B)
+        |
+        +----- w(B,20)
+
+     could evolve to
+
+
+        0 ------- w(A, 10)
+        |
+        |
+        |
+        |
+        +----- w(B,20) -- completed_read(B,20)
+
+
+TODO:
+
+* try to express rules governing attachment of messages (arriving from threads) into memory's operation-graph
+* describe how memory's responses to reads turn read nodes into completed_read nodes
+* question: how do threads indicate order-dependence?
+    - possibly: reads/writes from threads can indicate a set of previous memory operations on which they depend
+* alter thread state semantics so that ordering dependences are reflected in the emitted memory messages e.g., in
+    %r3 = 10
+    %r1 = LOAD addr
+    %r2 = ADD %r1 %r3
+    _ = STORE %r2 addr
+  there is a write dependence between the LOAD and STORE.
