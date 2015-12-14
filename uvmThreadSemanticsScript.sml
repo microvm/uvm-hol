@@ -7,7 +7,15 @@ open monadsyntax
 val _ = new_theory "uvmThreadSemantics";
 val _ = type_abbrev("tid", ``:num``)
 val _ = type_abbrev("addr", ``:num``)  (* non-local memory addresses *)
-
+val _ = type_abbrev("memreqid", ``:num``)
+val _ = type_abbrev("memdeps", ``:memreqid set``)
+                   
+(*tmp: ==========================================================*)
+val _ = type_abbrev("float32", ``:num``)
+val _ = type_abbrev("float64", ``:num``)
+val _ = type_abbrev("int",     ``:num``)
+(*===============================================================*)
+   
 val _ = Datatype`
    value =
      Int num int
@@ -23,11 +31,10 @@ val _ = Datatype`
    | UFuncRefV addr
 `;
 
-
 val _ = Datatype`
   frame = <|
     function : fnname ;
-    ssavars : SSAVar |-> value option # memreqid set ;
+    ssavars : SSAVar |-> value option # memdeps;
     code : block_label |-> bblock
   |>`
 
@@ -44,7 +51,6 @@ val _ = type_abbrev(
 
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
-
 val _ = Datatype`
   threadState = <|
     stack : sus_frame list ;
@@ -56,8 +62,8 @@ val _ = Datatype`
 |>`
 
 val _ = Datatype`
-  memoryMessage = Read addr num (* memreq id *) memoryorder
-                | Write addr value memoryorder
+  memoryMessage = Read  addr memreqid memoryorder
+                | Write addr value    memoryorder
 `;
 
 val _ = Datatype`
@@ -96,17 +102,18 @@ val TSBIND_def = Define`
 `;
 
 val TSLOAD_def = Define`
-  TSLOAD (v : SSAVar) (a : addr) (m : memoryorder) : unit TSM =
+  TSLOAD (v : SSAVar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
       let reqnum = LEAST n. n ∉ FDOM ts0.memreq_map in
       let mesg = Read a reqnum m in
-      let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v))
+      let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v)) in
+      let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ ("b",(NONE,depa UNION {reqnum}))))
       in
-        Success((), ts1, [mesg])
+        Success((), ts2, [mesg])
 `
 
 val TSSTORE_def = Define`
-  TSSTORE (v : value) (a : addr) (m : memoryorder) : unit TSM =
+  TSSTORE (v : value, depv : memdeps) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
        Success((), ts0, [Write a v m])
 `;
@@ -143,31 +150,32 @@ val TSGET_def = Define`
 `
 
 val readVar_def = Define`
-  readVar (x : SSAVar) : value TSM =
+  readVar (x : SSAVar) : (value # memdeps) TSM =
     do
       ts <- TSGET ;
       case FLOOKUP ts.curframe.ssavars x of
           NONE => TSDIE
-        | SOME NONE => TSBLOCKED
-        | SOME (SOME v) => return v
+        | SOME (NONE,_) => TSBLOCKED
+        | SOME ((SOME v,deps)) => return (v,deps)
     od
 `
 
 val evalbop_def = Define`
-  evalbop bop v1 v2 : value list TSM =
+  evalbop bop v1 v2 : (value list) TSM =
    case bop of
      Add => return [v1 + v2]
    | Sdiv => if v2 ≠ 0 then return [v1 DIV v2] else TSDIE
 `;
 
 val eval_exp_def = Define`
-  eval_exp (e : expression) : value list TSM =
+  eval_exp (e : expression) : ((value list) # memdeps) TSM =
       case e of
       | Binop bop v1 v2 =>
           do
-            val1 <- readVar v1 ;
-            val2 <- readVar v2 ;
-            evalbop bop val1 val2
+            (val1, dep1) <- readVar v1 ;
+            (val2, dep2) <- readVar v2 ;
+            v <- evalbop bop val1 val2;
+            return (v, dep1 UNION dep2)
           od
 `
 
@@ -183,7 +191,7 @@ val TSASSERT_def = Define`
 `;
 
 val valbind_def = Define`
-  valbind vars values : unit TSM =
+  valbind vars (values, dep) : unit TSM =
     if LENGTH vars ≠ LENGTH values ∨ ¬ALL_DISTINCT vars then TSDIE
     else do
       ts0 <- TSGET ;
@@ -192,7 +200,7 @@ val valbind_def = Define`
                       ts with curframe updated_by
                         (λcf.
                            cf with ssavars updated_by
-                             (λfm. fm |+ (var, SOME value))))
+                             (λfm. fm |+ (var, (SOME value,dep) ))))
                    ts0
                    (ZIP(vars,values)))
     od
@@ -206,25 +214,27 @@ val exec_inst_def = Define`
            values <- eval_exp exp ;
            valbind vtuple values
         od
-    | Load destvar srcvar morder =>
+    | Load destvar isiref srcvar morder =>
         do
-           a <- readVar srcvar ;
-           TSLOAD destvar a morder
+           (a, depa) <- readVar srcvar ;
+           TSLOAD destvar (a,depa) morder
         od
-    | Store srcvar destvar morder =>
+    | Store srcvar isiref destvar morder =>
         do
-           v <- readVar srcvar ;
-           a <- readVar destvar ;
-           TSSTORE v a morder
+           (v,depv) <- readVar srcvar ;
+           (a,depa) <- readVar destvar ;
+           TSSTORE (v,depv) (a,depa) morder
         od
 `
 
 (* Test:
 
+load "uvmThreadSemanticsTheory";
+
 Define`ts = <| curframe :=
-               <| ssavars := FEMPTY |+ ("y", SOME 1) |+ ("z", SOME 2)
-                                    |+ ("a", SOME 1024)
-                                    |+ ("p", NONE) |> ;
+               <| ssavars := FEMPTY |+ ("y", (SOME 1,{}) ) |+ ("z", (SOME 2,{}))
+                                    |+ ("a", (SOME 1024,{}))
+                                    |+ ("p", (NONE,{}) ) |> ;
                memreq_map := FEMPTY
             |> `;
 
@@ -236,6 +246,9 @@ EVAL ``do
         exec_inst (Load "x" T "a" SEQ_CST) ;
         exec_inst (Load "x'" T "a" SEQ_CST)
        od ts``
+
+EVAL ``exec_inst (Load "x" T "a" SEQ_CST) ts``;
+EVAL ``exec_inst (Assign ["w"] (Binop Add "x" "y")) ts``;
 
 EVAL ``exec_inst (Store "z" T "a" SEQ_CST) ts``;
 

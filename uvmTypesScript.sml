@@ -23,7 +23,8 @@ val _ = Datatype`
    | UPtr uvmType
    | Struct structID
    | Array uvmType num
-   | Hybrid (uvmType list) uvmType
+(* | Hybrid (uvmType list) uvmType *) (* TODO: match this change in code below *)
+   | Hybrid uvmType uvmType
    | Void
    | ThreadRef
    | StackRef
