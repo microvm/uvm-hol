@@ -7,15 +7,17 @@ open monadsyntax
 val _ = new_theory "uvmThreadSemantics";
 val _ = type_abbrev("tid", ``:num``)
 val _ = type_abbrev("addr", ``:num``)  (* non-local memory addresses *)
-val _ = type_abbrev("memreqid", ``:num``)
-val _ = type_abbrev("memdeps", ``:memreqid set``)
                    
 (*tmp: ==========================================================*)
 val _ = type_abbrev("float32", ``:num``)
 val _ = type_abbrev("float64", ``:num``)
 val _ = type_abbrev("int",     ``:num``)
 (*===============================================================*)
-   
+
+val _ = type_abbrev("memreqid", ``:num``)
+val _ = type_abbrev("memdeps", ``:memreqid set``)
+
+
 val _ = Datatype`
    value =
      Int num int
@@ -62,8 +64,8 @@ val _ = Datatype`
 |>`
 
 val _ = Datatype`
-  memoryMessage = Read  addr memreqid memoryorder
-                | Write addr value    memoryorder
+  memoryMessage = Read  addr memreqid memoryorder memdeps
+                | Write addr value    memoryorder memdeps
 `;
 
 val _ = Datatype`
@@ -105,7 +107,7 @@ val TSLOAD_def = Define`
   TSLOAD (v : SSAVar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
       let reqnum = LEAST n. n ∉ FDOM ts0.memreq_map in
-      let mesg = Read a reqnum m in
+      let mesg = Read a reqnum m (depa UNION {reqnum}) in
       let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v)) in
       let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ ("b",(NONE,depa UNION {reqnum}))))
       in
@@ -115,7 +117,7 @@ val TSLOAD_def = Define`
 val TSSTORE_def = Define`
   TSSTORE (v : value, depv : memdeps) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
-       Success((), ts0, [Write a v m])
+       Success((), ts0, [Write a v m (depv UNION depa)])
 `;
 
 val _ = overload_on ("monad_bind", ``TSBIND``)

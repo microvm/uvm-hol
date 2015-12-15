@@ -26,9 +26,6 @@ val _ = Datatype`
              rf : node |-> node
           |>`;
 
-val is_fence = Define`
-    is_fence n = (n.operation = Fn)
-`;
 
 val is_acquire = Define`
     is_acquire n = case n.order of
@@ -44,7 +41,7 @@ val is_consume = Define`
        CONSUME => (n.operation = Rd)
      | _       => F
 `;
-
+                       
 val is_release = Define`
     is_release n = case n.order of
         RELEASE => (n.operation = Wr) ∨ (n.operation = Fn)
@@ -53,20 +50,13 @@ val is_release = Define`
       | _       => F
 `;
 
-val is_atomic = Define`
-    is_atomic n = (n.order <> NOT_ATOMIC)
-`;
-
-val reads_from = Define`
-    reads_from A B inGraph = (FLOOKUP inGraph.rf A = SOME B)
-`;
 
 (* Program order: Evaluations in the same thread  *)
 val sequenced_before = Define`
-    (sequenced_before A B inGraph) = ((A.thread_id = B.thread_id) ∧ (A.timestamp < B.timestamp) ∧ (A IN inGraph.nodes) ∧ (B IN inGraph.nodes))
+    (sequenced_before n1 n2 inGraph) = ((n1.thread_id = n2.thread_id) ∧ (n1.timestamp < n2.timestamp) ∧ (n1 IN inGraph.nodes) ∧ (n2 IN inGraph.nodes))
 `;
 
-(* TODO: fences, futex, etc. *)
+(* TODO: fences, etc. *)
 (* An evaluation A synchronises with another evaluation B if: (M is a memory location)
      1. A does a release op on M. B does an acquire op on M. B sees a value stored by an op in the release sequence headed by A, or
      2. A is a release fence, and, B is an acquire fence, and, there exist atomic X and Y, both on location M, such that A is sequenced before X, X store into M, Y is sequenced before B, and Y sees the value written by X or a value written by any store operation in the hypothetical release sequence X would head if it were a release operation, or
@@ -76,26 +66,27 @@ val sequenced_before = Define`
      6. A is a futex wake operation and B is the next operation after the futex wait operation of the thread woken up by A.
 *)
 val synchronizes_with = Define`
-    (synchronizes_with A B inGraph) = ((A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧  (*(A.timestamp < B.timestamp)*)
-                   ( (A.address = B.address) ∧ (is_release A) ∧ (is_acquire B) ∧ (reads_from A B inGraph) ) ∨
-                   ( (is_fence A) ∧ (is_release A) ∧ (is_fence B) ∧ (is_acquire B) ∧
-                     (∃ X Y M. (is_atomic X) ∧ (is_atomic Y) ∧ (X.address = M) ∧ (Y.address = M) ∧ (sequenced_before A X inGraph) ∧ (sequenced_before Y B inGraph) ∧ (reads_from Y X inGraph))) ∧
-                   ( F ) (* TODO *)
-)`;
+    (synchronizes_with n1 n2 inGraph) = ((n1.address = n2.address) ∧ (* same address *)
+                                 (is_release n1) ∧ (is_acquire n2) ∧ (* a,b are a release,acquire resp. *)
+                                 (FLOOKUP inGraph.rf n2 = SOME n1) ∧ (* n2 reads from n1 *)
+                                 (*(n1.timestamp < n2.timestamp)*)
+                                 (n1.thread_id <> n2.thread_id) ∧ (* different threads *)
+                                 (n1 IN inGraph.nodes) ∧ (n2 IN inGraph.nodes)) (* Both ops exist *)
+`;
 
 (* A memory operation B depends on A if:
      1. The data value of A is used as a data argument of B (given through deps)
-     2. The address of A has been written to by B (okay, but possibly wrong. TODO: fix this)
-     3. B depends on X and X depends on A
+     2. The address of A has been written to by B (okay, but slightly wrong. TODO: fix this)
+     3. B depends on X and X depends 
 *)
 val deps_of = Define`
-  deps_of (msg, ttid) inGraph = case msg of                 (* same thread *)       (* same addr *)      (* most recent *)
+  deps_of (msg, ttid) inGraph = case msg of   (* same thread *) (* same addr *)   (* most recent *)
       Read a' id order dep => let tmp = dep UNION {nd.mid | (nd.thread_id = ttid) ∧ (nd.address = a') ∧ ~(∃nd2. nd2.timestamp>nd.timestamp) }
                               in { nd.mid | (nd.mid IN tmp) ∨ (∃nd2. (nd.mid IN nd2.deps) ∧ (nd2.mid IN tmp)) }
     | Write a' vl order dep => { nd.mid | (nd.mid IN dep) ∨ (∃ nd2. (nd.mid IN nd2.deps) ∧ (nd2.mid IN dep))}
 `;
 val carries_dependency_to = Define`
-    carries_dependency_to A B inGraph = (B.mid IN A.deps)
+    carries_dependency_to n1 n2 inGraph = (n2.mid IN n1.deps)
 `;
 
 (* A is dependency-ordered before B if:
@@ -123,20 +114,21 @@ val interthread_happens_before = Hol_defn "interthread_happens_before" `
              ( interthread_happens_before n1 X inGraph ∨ interthread_happens_before X n2 inGraph))))
 `;
 
+
 (* An evaluation A happens before an evaluation B if A is sequenced before B or A inter-thread happens before B. *)
 val happens_before = Define`
-    (happens_before A B inGraph) = (
-      (sequenced_before A B inGraph) ∨
-      (interthread_happens_before A B inGraph)
-)`;
+    (happens_before n1 n2 inGraph) =
+      ((sequenced_before n1 n2 inGraph) ∨
+       (interthread_happens_before n1 n2 inGraph))
+`;
 
 (* A visible store operation A to a memory location M with respect to a load operation B from M satisfies the conditions:
      1. A happens before B, and
      2. There is no other store operation X to M such that A happens before X and X happens before B.
 *)
 val visible_to = Define`
-    visible_to A B inGraph = ((happens_before A B inGraph) ∧
-                               ~(∃ X. (happens_before A X inGraph) ∧ (happens_before X B inGraph)))
+    visible_to n1 n2 inGraph = ((happens_before n1 n2 inGraph) ∧
+                               ~(∃ X. (happens_before n1 X inGraph) ∧ (happens_before X n2 inGraph)))
 `;
 
 
