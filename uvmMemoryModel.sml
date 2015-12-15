@@ -95,18 +95,21 @@ val deps_of = Define`
     | Write a' vl order dep => { nd.mid | (nd.mid IN dep) ∨ (∃ nd2. (nd.mid IN nd2.deps) ∧ (nd2.mid IN dep))}
 `;
 val carries_dependency_to = Define`
-    carries_dependency_to A B inGraph = (B.mid IN A.deps)
-`;
+    carries_dependency_to A B inGraph = (
+                               (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
+                               (B.mid IN A.deps)
+)`; 
 
 (* A is dependency-ordered before B if:
      1. A does a release op on M. in another thread, B does a consume op on M. B sees a value stored by any store ops in the release sequence headed by A. OR
      2. For some X, A is dependency-ordered before X and X carries a dependency to B.
 *)
 val dependency_ordered_before = Hol_defn "dependency_ordered_before" `
-   (dependency_ordered_before A B inGraph) =
-                  ((synchronizes_with A B inGraph) ∨
-                   (∃ X. (dependency_ordered_before A B inGraph) ∧ (carries_dependency_to X B inGraph)))
-`;
+    dependency_ordered_before A B inGraph = (
+                  (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
+                  (synchronizes_with A B inGraph) ∨
+                  (∃ X. (dependency_ordered_before A B inGraph) ∧ (carries_dependency_to X B inGraph))
+)`;
 
 (* An evaluation A inter-thread happens before an evaluation B if A synchronises with B, A is dependency-ordered before B, or, for some evaluation X:
     1. A synchronises with X and X is sequenced before B,
@@ -114,18 +117,20 @@ val dependency_ordered_before = Hol_defn "dependency_ordered_before" `
     3. A inter-thread happens before X and X inter-thread happens before B.
 *)
 val interthread_happens_before = Hol_defn "interthread_happens_before" `
-    (interthread_happens_before n1 n2 inGraph) =
-      ((synchronizes_with n1 n2 inGraph) ∨
-       (dependency_ordered_before n1 n2 inGraph) ∨
-       (∃ X. X IN inGraph.nodes ∧
-             (( synchronizes_with n1 X inGraph ∧ sequenced_before X n2 inGraph) ∨
-             ( sequenced_before n1 X inGraph ∨ interthread_happens_before X n2 inGraph) ∨ 
-             ( interthread_happens_before n1 X inGraph ∨ interthread_happens_before X n2 inGraph))))
-`;
+    (interthread_happens_before A B inGraph) = (
+      (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
+      (synchronizes_with A B inGraph) ∨
+      (dependency_ordered_before A B inGraph) ∨
+      (∃ X. X IN inGraph.nodes ∧
+            (( synchronizes_with A X inGraph ∧ sequenced_before X B inGraph) ∨
+            ( sequenced_before A X inGraph ∨ interthread_happens_before X B inGraph) ∨ 
+            ( interthread_happens_before A X inGraph ∨ interthread_happens_before X B inGraph)))
+)`;
 
 (* An evaluation A happens before an evaluation B if A is sequenced before B or A inter-thread happens before B. *)
 val happens_before = Define`
     (happens_before A B inGraph) = (
+      (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
       (sequenced_before A B inGraph) ∨
       (interthread_happens_before A B inGraph)
 )`;
@@ -135,7 +140,8 @@ val happens_before = Define`
      2. There is no other store operation X to M such that A happens before X and X happens before B.
 *)
 val visible_to = Define`
-    visible_to A B inGraph = ((happens_before A B inGraph) ∧
+    visible_to A B inGraph = ( (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
+                               (happens_before A B inGraph) ∧
                                ~(∃ X. (happens_before A X inGraph) ∧ (happens_before X B inGraph)))
 `;
 
