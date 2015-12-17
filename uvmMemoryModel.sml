@@ -6,7 +6,7 @@ open uvmThreadSemanticsTheory;
 val _ = new_theory "uvmMemoryModel";
 
 val _ = type_abbrev("input", ``:(memoryMessage # tid)``);
-val _ = Datatype` output_message = Out addr value tid memreqid `;
+val _ = Datatype` output_message = Out value memreqid tid `;
 val _ = Datatype`ops = Rd | Wr | Fn `
 val _ = Datatype`
   node = <|
@@ -40,9 +40,7 @@ val is_acquire = Define`
 `;
 
 val is_consume = Define`
-    is_consume n = case n.order of (* or (n.order=CONSUME) *)
-       CONSUME => (n.operation = Rd)
-     | _       => F
+    is_consume n = ((n.operation = Rd) ∧ (n.order <> NOT_ATOMIC) ∧ (n.order <> RELAXED)) (* or (n.order=CONSUME) *)
 `;
 
 val is_release = Define`
@@ -57,6 +55,10 @@ val is_atomic = Define`
     is_atomic n = (n.order <> NOT_ATOMIC)
 `;
 
+val same_thread = Define`
+    same_thread A B = (A.thread_id = B.thread_id)
+`;
+
 val reads_from = Define`
     reads_from A B inGraph = (FLOOKUP inGraph.rf A = SOME B)
 `;
@@ -66,7 +68,6 @@ val sequenced_before = Define`
     (sequenced_before A B inGraph) = ((A.thread_id = B.thread_id) ∧ (A.timestamp < B.timestamp) ∧ (A IN inGraph.nodes) ∧ (B IN inGraph.nodes))
 `;
 
-(* TODO: fences, futex, etc. *)
 (* An evaluation A synchronises with another evaluation B if: (M is a memory location)
      1. A does a release op on M. B does an acquire op on M. B sees a value stored by an op in the release sequence headed by A, or
      2. A is a release fence, and, B is an acquire fence, and, there exist atomic X and Y, both on location M, such that A is sequenced before X, X store into M, Y is sequenced before B, and Y sees the value written by X or a value written by any store operation in the hypothetical release sequence X would head if it were a release operation, or
@@ -74,14 +75,14 @@ val sequenced_before = Define`
      4. A is an atomic op that performs a release operation on M, and, B is an acquire fence, and, there exists some atomic operation X on M such that X is sequenced before B and sees the value written by A or a value written by any side effect in the release sequence headed by A, or
      5. A is the creation of a thread and B is the beginning of the execution of the new thread.
      6. A is a futex wake operation and B is the next operation after the futex wait operation of the thread woken up by A.
-*)
+ *)
 val synchronizes_with = Define`
     (synchronizes_with A B inGraph) = ((A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧  (*(A.timestamp < B.timestamp)*)
                    ( (A.address = B.address) ∧ (is_release A) ∧ (is_acquire B) ∧ (reads_from A B inGraph) ) ∨
                    ( (is_fence A) ∧ (is_release A) ∧ (is_fence B) ∧ (is_acquire B) ∧
                      (∃ X Y M. (is_atomic X) ∧ (is_atomic Y) ∧ (X.address = M) ∧ (Y.address = M) ∧ (sequenced_before A X inGraph) ∧ (sequenced_before Y B inGraph) ∧ (reads_from Y X inGraph))) ∧
-                   ( F ) (* TODO *)
-)`;
+                   ( F ) (* TODO: fences, futex *))
+`;
 
 (* A memory operation B depends on A if:
      1. The data value of A is used as a data argument of B (given through deps)
@@ -145,12 +146,53 @@ val visible_to = Define`
                                ~(∃ X. (happens_before A X inGraph) ∧ (happens_before X B inGraph)))
 `;
 
+(* From C++11:
 
+*)
+val must_modify_before = Hol_defn "must_modify_before" `
+    must_modify_before A B inGraph = ( (A IN inGraph.nodes) ∧ (is_atomic A) ∧ (B IN inGraph.nodes) ∧ (is_atomic B) ∧ (
+      ((A.timestamp < B.timestamp) ∧ (same_thread A B) ∧ ((is_acquire A) ∨ (is_release B))) ∨
+      (reads_from A B inGraph) ∨
+      (happens_before A B inGraph) ∨
+      
+      (F) (*TODO: finish*) ∨
+      
+      
+      (∃ X. (must_modify_before A X inGraph) ∧ (must_modify_before X B inGraph))
+    ))
+`;
+
+val can_modify_afer = Define`
+    can_modify_after A B inGraph = ((A<>B) ∧ ~(must_modify_before A B inGraph))
+`;
+
+val in_visible_sequence_of = Define`
+    in_visible_sequence_of A B inGraph =
+      let visible_sequence X = { nd | (nd.address = X.address) ∧ ((visible_to nd X inGraph) ∨ (* The first in sequence *)
+                                      ( ~(happens_before X nd inGraph) ∧ (∃fs. (visible_to fs X inGraph) ∧ (can_modify_after nd fs inGraph))))} (* the rest *)
+      in A IN (visible_sequence B)
+`;
+
+val can_read_from = Define`
+    can_read_from A B inGraph = (
+      (~(is_atomic A) ∧ ~(is_atomic B) ∧ (visible_to B A inGraph) ) ∨           (* non-atomic *)
+      ( (is_atomic A) ∧  (is_atomic B) ∧ (in_visible_sequence_of B A inGraph) ) ∨ (* atomic *)
+      ( F )                                                                     (* undefined combinations? *)
+    )
+`;
+
+
+
+
+
+
+
+(* Everything above is building up to these two relations, receive and resolve *)
 
 
 (* Receive input message, create new nodes from these messages *)
 val receive_message = Define`
-  receive_message (msg, ttid) inGraph : graph = let new_time = LEAST n. ~(∃ nd. (nd.timestamp = n) ∧ (nd IN inGraph.nodes) ) in case msg of
+  receive_message (inGraph, (msg, ttid)) graph' = let new_time = LEAST n. ~(∃ nd. (nd.timestamp = n) ∧ (nd IN inGraph.nodes) ) in case msg of
       Read a' id order' dep => let new_node = <| operation := Rd ;
                                              address := a' ;
                                              timestamp := new_time ;
@@ -159,7 +201,7 @@ val receive_message = Define`
                                              thread_id := ttid ;
                                              order := order' ;
                                              deps := deps_of (msg,ttid) inGraph |>
-                           in inGraph with nodes updated_by (λlst. {new_node} UNION lst)
+                           in (graph' = inGraph with nodes updated_by (λlst. {new_node} UNION lst))
 
     | Write a' vl order' dep => let new_node = <| operation := Rd ;
                                               address := a' ;
@@ -169,14 +211,19 @@ val receive_message = Define`
                                               thread_id := ttid ;
                                               order := order' ;
                                               deps := deps_of (msg,ttid) inGraph |>
-                           in inGraph with nodes updated_by (λlst. {new_node} UNION lst)
+                           in (graph' = inGraph with nodes updated_by (λlst. {new_node} UNION lst))
 `;
 
+(* Probably not the best way to this *)
+val UNSOME = Define`
+    UNSOME (SOME x) = x
+`;
 
 (* TODO: output message *)
 val resolves_to = Define`
-    resolves_to g1 g2 = ∃ w r. (w IN g1.nodes) ∧ (r IN g1.nodes) ∧ (g1.nodes = g2.nodes) ∧ (* TODO: update r's value *)
-                               (visible_to w r g1) ∧ (g2.rf = g1.rf |+ (r, w))
+    resolves_to g1 (msg, g2) = ∃ w r. (w IN g1.nodes) ∧ (r IN g1.nodes) ∧ (g1.nodes = g2.nodes) ∧ (* TODO: maybe update r's value? *)
+                                      (can_read_from w r g1) ∧ (g2.rf = g1.rf |+ (r, w)) ∧
+                                      (msg = Out (UNSOME w.values) (r.mid) (r.thread_id))
 `;
 
 val _ = export_theory();
