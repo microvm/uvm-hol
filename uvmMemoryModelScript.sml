@@ -67,18 +67,57 @@ val same_thread = Define`
     same_thread A B = (A.thread_id = B.thread_id)
 `;
 
+val same_address = Define`
+    same_address A B = (A.address = B.address)
+`;
+
 val reads_from = Define`
     reads_from A B inGraph = (FLOOKUP inGraph.rf A = SOME B)
 `;
 
-(* Program order: Evaluations in the same thread  *)
+
+
+(* Set of relations that are used to define `receive` and `resolve`:
+
+ * sequenced_before            [✓]
+ * release_sequence_of         [~] : missing wrm
+ * synchronizes_with           [ ] : missing fences, mutex, thread creation
+ * carries_dependency_to       [~] : must be combined into one
+ * dependency_ordered_before   [✓]
+ * interthread_happens_before  [✓]
+ * happens_before              [✓]
+ * visible_to                  [✓]
+ * visible_sequence_of         [~] : change format
+
+(* must_modify_before *)       [~] : change format
+(* can_read_from *)            [✓]
+(* reads_from *)               [✓]
+
+ * receive                     [~]
+ * resolve                     [~]
+
+ ? Undefined behaviour         [?]
+
+
+
+Questions, notes:
+
+ * Are Hol_defns okay? Proving termination? Insert empty node.
+ * Is release_sequence_of dependent on the Modification order? -> Circular logic?  
+ * Does the release sequence include the head?
+
+ *)
+
+
+(* Single thread's program order: Evaluations in the same thread  *)
 val sequenced_before = Define`
     (sequenced_before A B inGraph) = ((A.thread_id = B.thread_id) ∧ (A.timestamp < B.timestamp) ∧ (A IN inGraph.nodes) ∧ (B IN inGraph.nodes))
 `;
 
 
-val in_release_sequence_of = Define`
-    in_release_sequence_of A B inGraph = (F) (*TODO*)
+(* TODO: include read-write operations in any thread, according to modification order *)
+val release_sequence_of = Define`
+    release_sequence_of A inGraph = { B | (B = A) ∨ ((same_address A B) ∧ (same_thread A B) ∧ (sequenced_before A B inGraph)) }
 `;
 
 (* An evaluation A synchronises with another evaluation B if: (M is a memory location)
@@ -90,17 +129,23 @@ val in_release_sequence_of = Define`
      6. A is a futex wake operation and B is the next operation after the futex wait operation of the thread woken up by A.
  *)
 val synchronizes_with = Define`
-    (synchronizes_with A B inGraph) = ((A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧  (*(A.timestamp < B.timestamp)*)
-                   ( (A.address = B.address) ∧ (is_release A) ∧ (is_acquire B) ∧ (reads_from A B inGraph) ) ∨
-                   ( (is_fence A) ∧ (is_release A) ∧ (is_fence B) ∧ (is_acquire B) ∧
-                     (∃ X Y M. (is_atomic X) ∧ (is_atomic Y) ∧ (X.address = M) ∧ (Y.address = M) ∧ (sequenced_before A X inGraph) ∧ (sequenced_before Y B inGraph) ∧ (reads_from Y X inGraph))) ∧
-                   ( F ) (* TODO: fences, futex *))
+    synchronizes_with A B inGraph = ((A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
+
+        (*1.*) ( (is_release A) ∧ (is_acquire B) ∧ (same_address A B) ∧ (∃ X. (reads_from B X inGraph) ∧ (X IN release_sequence_of A inGraph)) ) ∨
+        (*2.*) ( (is_release A) ∧ (is_acquire B) ∧ (is_fence A) ∧ (is_fence B) ∧ (∃ X Y. (is_atomic X) ∧ (is_atomic Y) ∧ (same_address X Y) ∧ (sequenced_before A X inGraph) ∧ (is_store X) ∧ (sequenced_before Y B inGraph) ∧ ( (reads_from Y X inGraph) ∨ (∃ Z. (reads_from Y Z inGraph) ∧ (Z IN release_sequence_of X inGraph)))) ) ∨
+        (*3.*) ( (is_release A) ∧ (is_acquire B) ∧ (is_fence A) ∧ (∃ X. (sequenced_before A X inGraph) ∧ (same_address B X) ∧ ((reads_from B X inGraph) ∨ (∃ Z. (reads_from B Z inGraph) ∧ (Z IN release_sequence_of X inGraph))) ) ) ∨
+        (*4.*) (F) ∨ (* TODO *)
+        (*5.*) (F) ∨ (* TODO: Thread creation *)
+        (*6.*) (F)   (* TODO: Futex wake *)
+    )
 `;
 
 (* A memory operation B depends on A if:
      1. The data value of A is used as a data argument of B (given through deps)
      2. The address of A has been written to by B (okay, but possibly wrong. TODO: fix this)
      3. B depends on X and X depends on A
+
+     TODO: Combine two functions into one.
 *)
 val deps_of = Define`
   deps_of (msg, ttid) inGraph = case msg of                 (* same thread *)       (* same addr *)      (* most recent *)
@@ -117,15 +162,15 @@ val carries_dependency_to = Define`
 (* A is dependency-ordered before B if:
      1. A does a release op on M. in another thread, B does a consume op on M. B sees a value stored by any store ops in the release sequence headed by A. OR
      2. For some X, A is dependency-ordered before X and X carries a dependency to B.
-*)
+ *)
 val dependency_ordered_before = Hol_defn "dependency_ordered_before" `
     dependency_ordered_before A B inGraph = ( (A IN inGraph.nodes) ∧ (B IN inGraph.nodes) ∧
                                                                
-                  (*1.*) (synchronizes_with A B inGraph) ∨ (* TODO: is this right? No. *)
-                (*  (*1.*) ( (is_release A) ∧ (A.address = B.address) ∧ ~(same_thread A B) ∧ (is_consume B) ) (*TODO*) *)
-                  (*2.*) (∃ X. (dependency_ordered_before A B inGraph) ∧ (carries_dependency_to X B inGraph))
-                  
-)`;
+        (*1.*) ( (is_release A) ∧ (same_address A B) ∧ ~(same_thread A B) ∧ (is_consume B) ∧ (∃ X. (X IN (release_sequence_of A inGraph)) ∧ (reads_from B X inGraph) )) ∨
+        (*2.*) (∃ X. (dependency_ordered_before A X inGraph) ∧ (carries_dependency_to X B inGraph))
+
+    )
+`;
 
 (* An evaluation A inter-thread happens before an evaluation B if A synchronises with B, A is dependency-ordered before B, or, for some evaluation X:
     1. A synchronises with X and X is sequenced before B,
@@ -161,9 +206,8 @@ val visible_to = Define`
                                ~(∃ X. (happens_before A X inGraph) ∧ (happens_before X B inGraph)))
 `;
 
-(* From C++11:
 
-*)
+(* TODO: fix to only look at one address, and only writes *)
 val must_modify_before = Hol_defn "must_modify_before" `
     must_modify_before A B inGraph = (
       (A IN inGraph.nodes) ∧ (is_atomic A) ∧ (is_store A) ∧
@@ -188,6 +232,7 @@ val can_modify_afer = Define`
     can_modify_after A B inGraph = ((A<>B) ∧ ~(must_modify_before A B inGraph))
 `;
 
+(* TODO: fix to only look at writes and only return a set given a read *)
 val in_visible_sequence_of = Define`
     in_visible_sequence_of A B inGraph =
       let visible_sequence X = { nd | (nd.address = X.address) ∧
