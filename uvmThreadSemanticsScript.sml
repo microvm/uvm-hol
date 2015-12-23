@@ -54,19 +54,20 @@ val _ = type_abbrev(
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
 val _ = Datatype`
+  memoryMessage = Read  addr memreqid memoryorder memdeps
+                | Write addr memreqid value    memoryorder memdeps
+`;
+
+val _ = Datatype`
   threadState = <|
     stack : sus_frame list ;
     curframe : frame ;
     curblock : block_label ;
     offset : num ;
     tid : tid ;
-    memreq_map : num |-> SSAVar
+    memreq_map : num |-> SSAVar ;
+    addrwr_map : num |-> addr
 |>`
-
-val _ = Datatype`
-  memoryMessage = Read  addr memreqid memoryorder memdeps
-                | Write addr value    memoryorder memdeps
-`;
 
 val _ = Datatype`
   tsstep_result = Success α | Abort | Blocked
@@ -106,7 +107,7 @@ val TSBIND_def = Define`
 val TSLOAD_def = Define`
   TSLOAD (v : SSAVar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
-      let reqnum = LEAST n. n ∉ FDOM ts0.memreq_map in
+      let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION (FDOM ts0.addrwr_map)) in
       let mesg = Read a reqnum m (depa UNION {reqnum}) in
       let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v)) in
       let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ ("b",(NONE,depa UNION {reqnum}))))
@@ -117,7 +118,11 @@ val TSLOAD_def = Define`
 val TSSTORE_def = Define`
   TSSTORE (v : value, depv : memdeps) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
-       Success((), ts0, [Write a v m (depv UNION depa)])
+      let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION FDOM (ts0.addrwr_map)) in
+      let mesg = Write a reqnum v m (depv UNION depa) in
+      let ts1 = ts0 with addrwr_map updated_by (λrmap. rmap |+ (reqnum, a))
+      in
+        Success((), ts1, [mesg])
 `;
 
 val _ = overload_on ("monad_bind", ``TSBIND``)
@@ -245,9 +250,9 @@ EVAL ``exec_inst (Assign ["x"; "y"] (Binop Add "z" "y")) ts``;
 EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "u")) ts``;
 EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "p")) ts``;
 EVAL ``do
-        exec_inst (Load "x" T "a" SEQ_CST) ;
+        exec_inst (Load "x" T "a" SEQ_CST)
         exec_inst (Load "x'" T "a" SEQ_CST)
-       od ts``
+       od ts``;
 
 EVAL ``exec_inst (Load "x" T "a" SEQ_CST) ts``;
 EVAL ``exec_inst (Assign ["w"] (Binop Add "x" "y")) ts``;
