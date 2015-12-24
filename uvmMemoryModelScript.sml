@@ -65,15 +65,11 @@ val sameThread_def = Define`
 val sameAddress_def = Define`
     sameAddress A B = (A.address = B.address)`;
 
-val readsFrom_def = Define`
-    readsFrom g A B = (FLOOKUP g.rf A = SOME B)`;
-
-
 
 (* Utlility function: *)
 val indexOf_def = Define`
     indexOf list n A= case list of
-                          x::xs => if (x=A) then SOME n else indexOf xs (n+1) A`;
+                          x::xs => if (x=A) then SOME n else indexOf xs (n+1) A
                         | [] => NONE`;
 
 
@@ -117,26 +113,34 @@ val orderedBefore_def = Define`
                               (SOME a, SOME b) => (a < b)
                             | _ => (F)  `;*)
 
+val readsFrom_def = Define`
+    readsFrom g A B = ((FLOOKUP g.rf A = SOME B) ∧ (orderedBefore g B A))`;
+
 val modifiesBefore_def = Define`
-    modifiesBefore g A B = ( (orderedBefore g A B) ∧ (sameAddress A B) )`;
+    modifiesBefore g A B = ( (orderedBefore g A B) ∧ (sameAddress A B) ∧ (isStore A) ∧ (isStore B))`;
 
 val sequencedBefore_def = Define`
     sequencedBefore g A B = ((orderedBefore g A B) ∧ (sameThread A B)  )`;
 
+val inReleaseSequenceOf_def = Define`
+    inReleaseSequenceOf g B A = ((B = A) ∨ ((modifiesBefore g A B) ∧ (isAtomic B) ∧ (sequencedBefore g A B)))`;
 val releaseSequenceOf_def = Define` (* TODO: include read-write ops *)
     releaseSequenceOf g A = { B | (B = A) ∨ ((modifiesBefore g A B) ∧ (isAtomic B) ∧ (isStore B) ∧ ((sequencedBefore g A B) ∨ (F) )  )}   `;
 
-val (cdep_rules, cdep_ind, cdep_cases) = Hol_reln` (* This might not be how reln is supposed to work *)
+val carriesDependencyTo = Define`
+    carriesDependencyTo g B A = (B.mid IN A.ddeps)`;
+(* This should be worked out within the thread? *)
+(* val (cdep_rules, cdep_ind, cdep_cases) = Hol_reln` (* This might not be how reln is supposed to work *)
     (∀ g B A. (A.mid IN B.ddeps) ==> (carriesDependencyTo g B A)) ∧
     (∀ g B A. (∃ X. (sequencedBefore g A X) ∧ (sequencedBefore g X B) ∧ (isStore X) ∧ (isLoad B) ∧ (sameAddress X B) ∧ (A.mid IN X.ddeps)) ==> (carriesDependencyTo g B A)) ∧
-    (∀ g B A. (∃ X. (carriesDependencyTo g A X) ∧ (carriesDependencyTo g X B)) ==> (carriesDependencyTo g B A) )`;
+    (∀ g B A. (∃ X. (carriesDependencyTo g A X) ∧ (carriesDependencyTo g X B)) ==> (carriesDependencyTo g B A) )`;*)
 
 val synchronizesWith_def = Define`
-    synchronizesWith g A B = ( (orderedBefore g A B) ∧
-        (*1.*) ( (isRelease A) ∧ (isAcquire B) ∧ (sameAddress A B) ∧ (∃ X. (readsFrom g B X ) ∧ (X IN releaseSequenceOf g A)) ) ∨
-        (*2.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (isFence B) ∧ (∃ X Y. (isAtomic X) ∧ (isAtomic Y) ∧ (sameAddress X Y) ∧ (sequencedBefore g A X) ∧ (isStore X) ∧ (sequencedBefore g Y B) ∧ ( (readsFrom g Y X) ∨ (∃ Z. (readsFrom g Y Z) ∧ (Z IN releaseSequenceOf g X)))) ) ∨
-        (*3.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (∃ X. (sequencedBefore g A X) ∧ (sameAddress B X) ∧ ((readsFrom g B X) ∨ (∃ Z. (readsFrom g B Z) ∧ (Z IN releaseSequenceOf g X))) ) ) ∨
-        (*4.*) ( (isAtomic A) ∧ (isRelease A) ∧ (isAcquire B) ∧ (isFence B) ∧ (∃ X. (sameAddress A X) ∧ (sequencedBefore g X B) ∧ ((readsFrom g B A) ∨ (∃ Z. (readsFrom g B Z) ∧ (Z IN releaseSequenceOf g X))  ))  ) ∨ (* TODO *)
+    synchronizesWith g A B = (
+        (*1.*) ( (isRelease A) ∧ (isAcquire B) ∧ (sameAddress A B) ∧ (∃ X. (readsFrom g B X ) ∧ (inReleaseSequenceOf g X A)) ) ∨
+        (*2.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (isFence B) ∧ (∃ X Y. (isAtomic X) ∧ (isAtomic Y) ∧ (sameAddress X Y) ∧ (sequencedBefore g A X) ∧ (isStore X) ∧ (sequencedBefore g Y B) ∧ ( (readsFrom g Y X) ∨ (∃ Z. (readsFrom g Y Z) ∧ (inReleaseSequenceOf g Z X)))) ) ∨
+        (*3.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (∃ X. (sequencedBefore g A X) ∧ (sameAddress B X) ∧ ((readsFrom g B X) ∨ (∃ Z. (readsFrom g B Z) ∧ (inReleaseSequenceOf g Z X))) ) ) ∨
+        (*4.*) ( (isAtomic A) ∧ (isRelease A) ∧ (isAcquire B) ∧ (isFence B) ∧ (∃ X. (sameAddress A X) ∧ (sequencedBefore g X B) ∧ ((readsFrom g B A) ∨ (∃ Z. (readsFrom g B Z) ∧ (inReleaseSequenceOf g Z X))  ))  ) ∨ (* TODO *)
         (*5. A is the creation of a thread and B is the beginning of the execution of the new thread. *) (F) ∨
         (*6. A is a futex wake operation and B is the next operation after the futex wait operation of the thread woken up by A. *) (F)   )`;
 
@@ -181,7 +185,6 @@ val canReadFrom_def = Define`
 
 
 
-
 (*******************************************************************************)
 (* Everything above is building up to these two relations, receive and resolve *)
 (*******************************************************************************)
@@ -198,7 +201,7 @@ val receive = Define`
                                              ddeps := dep |>
                            in (graph' = inGraph with nodes updated_by (λlst. lst ++ [new_node] ))
 
-    | Write a' id vl order' dep => let new_node = <| operation := Rd ;
+    | Write a' id vl order' dep => let new_node = <| operation := Wr ;
                                               address := a' ;
                                               values := SOME vl ;
                                               (* mid := LEAST n. ~(∃ nd. (nd.mid = n) ∧ (nd IN inGraph.nodes) ) ;*)
