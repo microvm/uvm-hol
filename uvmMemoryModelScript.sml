@@ -143,7 +143,7 @@ val synchronizesWith_def = Define`
         (*1.*) ( (isRelease A) ∧ (isAcquire B) ∧ (sameAddress A B) ∧ (∃ X. (readsFrom g B X ) ∧ (inReleaseSequenceOf g X A)) ) ∨
         (*2.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (isFence B) ∧ (∃ X Y. (isAtomic X) ∧ (isAtomic Y) ∧ (sameAddress X Y) ∧ (sequencedBefore g A X) ∧ (isStore X) ∧ (sequencedBefore g Y B) ∧ ( (readsFrom g Y X) ∨ (∃ Z. (readsFrom g Y Z) ∧ (inReleaseSequenceOf g Z X)))) ) ∨
         (*3.*) ( (isRelease A) ∧ (isAcquire B) ∧ (isFence A) ∧ (∃ X. (sequencedBefore g A X) ∧ (sameAddress B X) ∧ ((readsFrom g B X) ∨ (∃ Z. (readsFrom g B Z) ∧ (inReleaseSequenceOf g Z X))) ) ) ∨
-        (*4.*) ( (isAtomic A) ∧ (isRelease A) ∧ (isAcquire B) ∧ (isFence B) ∧ (∃ X. (sameAddress A X) ∧ (sequencedBefore g X B) ∧ ((readsFrom g B A) ∨ (∃ Z. (readsFrom g B Z) ∧ (inReleaseSequenceOf g Z X))  ))  ) ∨ (* TODO *)
+        (*4.*) ( (isAtomic A) ∧ (isRelease A) ∧ (isAcquire B) ∧ (isFence B) ∧ (∃ X. (sameAddress A X) ∧ (sequencedBefore g X B) ∧ ((readsFrom g X A) ∨ (∃ Z. (readsFrom g X Z) ∧ (inReleaseSequenceOf g Z A))  ))  ) ∨ (* TODO *)
         (*5. A is the creation of a thread and B is the beginning of the execution of the new thread. *) (F) ∨
         (*6. A is a futex wake operation and B is the next operation after the futex wait operation of the thread woken up by A. *) (F)   )`;
 
@@ -232,6 +232,7 @@ val resolve = Define`
                                       (canReadFrom g1 w r) ∧ (g2.rf = g1.rf |+ (r, w)) ∧
                                       (msg = Out (THE w.values) (r.mid) (r.thread_id))
 `;
+
 
 val _ = export_theory();
 
