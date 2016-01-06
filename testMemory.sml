@@ -15,7 +15,7 @@ val receive' = Define`
                                              thread_id := ttid ;
                                              order := order' ;
                                              ddeps := dep |>
-                           in inGraph with nodes updated_by (λlst. lst ++ [new_node])
+                               in inGraph with nodes updated_by (λlst. lst ++ [new_node])
 
     | Write a' id vl order' dep => let new_node = <| operation := Wr ;
                                               address := a' ;
@@ -25,11 +25,30 @@ val receive' = Define`
                                               order := order' ;
                                               ddeps := dep |>
                            in inGraph with nodes updated_by (λlst. lst ++ [new_node])
+
 `;
 
 
 
+(* Relations for UNDEFINED BEHAVIOUR *)
+val dataRace_def = Define`
+    dataRace g A B = (
+      ~(sameThread A B)              ∧
+       (sameAddress A B)            ∧
+       ( (isStore A) ∨ (isStore B) ) ∧
+      ~(happensBefore g A B)         ∧
+      ~(happensBefore g B A)
+ )`;
 
+(* not possible in uvm-ir? *)
+val unsequencedRace_def = Define`
+    unsequencedRace g A B = (
+       (sameThread A B)              ∧
+       (sameAddress A B)            ∧
+       ( (isStore A) ∨ (isStore B) ) ∧
+      ~(sequencedBefore g A B)       ∧
+      ~(sequencedBefore g B A)
+)`;
 
 
 
@@ -67,6 +86,8 @@ val receive' = Define`
 
 *)
 
+Define `empty = <| nodes:=[]; rf:=FEMPTY |>`;
+
 
 
 (* I'll start with the really easy relations *)
@@ -76,7 +97,8 @@ val receive' = Define`
  / _ \ '_/ _` / -_) '_/ -_) _` | _ \/ -_)  _/ _ \ '_/ -_)
  \___/_| \__,_\___|_| \___\__,_|___/\___|_| \___/_| \___|  *)
 
-Define `g0= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
+
+Define `g0= FOLDL (receive') empty
          [
             ( Write 1024 0 112 NOT_ATOMIC {} , 0) ;
             ( Read  1024 1     SEQ_CST    {} , 1) ;
@@ -113,7 +135,7 @@ val ob_sanity_5 = prove(
  | '  \/ _ \/ _` | |  _| / -_|_-< _ \/ -_)  _/ _ \ '_/ -_)
  |_|_|_\___/\__,_|_|_| |_\___/__/___/\___|_| \___/_| \___|  *)
 
-Define `g1= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
+Define `g1= FOLDL (receive') empty
          [
             ( Write 1024 0 112 NOT_ATOMIC {} , 0) ;
             ( Write 9999 1 112 NOT_ATOMIC {} , 0) ;
@@ -185,13 +207,13 @@ val rs_sanity_0 = prove(``∀ A B C g. ( (readsFrom g C B) ∧ (inReleaseSequenc
  /__/\_, |_||_\__|_||_|_| \___/_||_|_/__\___/__/ \_/\_/ |_|\__|_||_|
      |__/                                                            *)
 
-Define `g5= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
+Define `g5= FOLDL (receive') empty
          [
             ( Write 1024 0 112 RELEASE {} , 0) ;
             ( Write 1024 1 432 RELAXED {} , 0) ;
             ( Write 9999 2 111 RELAXED {} , 0) ;
             ( Read  1024 3     ACQUIRE {} , 1) ;
-            ( Write 1024 4 888 RELAXED {} , 0) ;
+            ( Write 1024 4 888 RELAXED {} , 0) 
 ]`;
 
 Define `w5_0 = (EL 0 g5.nodes)`;
@@ -244,7 +266,7 @@ val sw_sanity_4 = prove(
            |_|  |_|                                          *)
 
 (* Only sequencedBefore for now - too trivial. Should check other cases. *)
-Define `g0= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
+Define `g0= FOLDL (receive') empty
          [
             ( Write 1024 0 112 SEQ_CST    {} , 1) ;
             ( Read  1024 1     SEQ_CST    {} , 1) ;
@@ -305,6 +327,166 @@ Hand written:
 
 
 
+(* ___   _   __  __ ___ ___ ___ ___   ___ ___ 
+  / __| /_\ |  \/  | _ ) _ \_ _|   \ / __| __|
+ | (__ / _ \| |\/| | _ \   /| || |) | (_ | _| 
+  \___/_/ \_\_|  |_|___/_|_\___|___/ \___|___| *)
+
+(* The Cambridge paper has numerous examples. Here, I show the those examples still hold, where possible (if the instructions have been defined). *)
+
+
+(* sequencedBefore and readsFrom
+  __  
+ /  | 
+ `| | 
+  | | 
+ _| |_
+ \___/  
+
+int main() {
+  int x = 2;
+  int y = 0;
+  y = (x==x);
+  return 0;}
+
+*)
+
+Define `cg1= FOLDL (receive') empty
+         [
+           ( Write 10 0 2 NOT_ATOMIC    {} , 1 ) ;
+           ( Write 20 1 0 NOT_ATOMIC    {} , 1 ) ;
+           ( Read  10 2   NOT_ATOMIC    {} , 1 ) ;
+           ( Read  10 3   NOT_ATOMIC    {} , 1 ) ;
+           ( Write 20 4 1 NOT_ATOMIC {2;3} , 1 )
+         ]`;
+
+Define `cw1_0 = (EL 0 cg1.nodes)`;
+Define `cw1_1 = (EL 1 cg1.nodes)`;
+Define `cr1_2 = (EL 2 cg1.nodes)`;
+Define `cr1_3 = (EL 3 cg1.nodes)`;
+Define `cw1_4 = (EL 4 cg1.nodes)`;
+
+(* All the arrows defined in the example's diagram: *)
+val cg0_rel0 = prove( ``sequencedBefore cg1 cw1_0 cw0_1``,EVAL_TAC);
+val cg0_rel1 = prove( ``sequencedBefore cg1 cw1_1 cr0_2``,EVAL_TAC);
+val cg0_rel2 = prove( ``sequencedBefore cg1 cw1_1 cr0_3``,EVAL_TAC);
+val cg0_rel3 = prove( ``sequencedBefore cg1 cr1_2 cw0_4``,EVAL_TAC);
+val cg0_rel4 = prove( ``sequencedBefore cg1 cr1_3 cw0_4``,EVAL_TAC);
+
+val cg0_rel5 = prove( ``canReadFrom cg1 cr1_2 cw1_0``, EVAL_TAC);
+e (RW_TAC (srw_ss()) [canReadFrom_def,isAtomic_def]);
+e (`cr1_2.order = NOT_ATOMIC ∧ cw1_0.order = NOT_ATOMIC` by EVAL_TAC);
+e (RW_TAC (srw_ss()) [visibleTo_def]);
+  e (`sequencedBefore cg1 cw1_0 cr1_2` by EVAL_TAC);
+  e (RW_TAC (srw_ss()) [happensBefore_def]);
+
+  e (RW_TAC (srw_ss()) [happensBefore_def,sequencedBefore_def,orderedBefore_def,sameThread_def]);
+  e (RW_TAC (srw_ss()) [indexOf_def]);
+  e (UNDISCH_TAC ``X IN cg1.nodeSet``);
+  e (Cases_on `X`);
+  e (EVAL_TAC);
+  
+  e (RW_TAC (srw_ss()) [sequencedBefore_def,orderedBefore_def]);
+
+  
+e (`sameThread cw1_0 cr1_2 ∧ orderedBefore cg1 cw1_0 cr1_2` by EVAL_TAC);
+EVAL ``sequencedBefore cg1 cw1_0 cr1_2``;
+e (RW_TAC (srw_ss()) [visibleTo_def,happensBefore_def,sequencedBefore_def,orderedBefore_def]);
+
+
+(* UNSEQUENCED RACES
+ _____ 
+/ __  \
+`' / /'
+  / /  
+./ /___
+\_____/
+
+int main() {
+  int x = 2;
+  int y = 0;
+  y = (x == (x=3));
+  return 0;}
+        *)
+
+
+(* synchronizesWith
+ _____ 
+|____ |
+    / /
+    \ \
+.___/ /
+\____/ 
+       
+void foo(int* p) {*p = 3;}
+int main() {
+  int x = 2;
+  int y;
+  thread t1(foo, &x);
+  y = 3;
+  t1.join();
+  return 0; }
+
+*)
+
+
+(* SEQ_CST
+   ___ 
+  /   |
+ / /| |
+/ /_| |
+\___  |
+    |_/
+
+int main() {
+  atomic_int x;
+  x.store(2);
+  int y = 0;
+  {{{ x.store(3);
+  ||| y = ((x.load())==3);
+  }}};
+  return 0; }       
+
+       *)
+
+Define `cg4= FOLDL (receive') empty
+         [
+           ( Write 10 0 2 SEQ_CST       {} , 0 ) ;
+           ( Write 20 1 2 NOT_ATOMIC    {} , 0 ) ;
+           ( Read  10 2   SEQ_CST       {} , 2 ) ;
+           ( Write 10 3 3 SEQ_CST       {} , 1 ) ;
+           ( Write 20 4 0 NOT_ATOMIC   {3} , 2 )
+         ]`;
+
+Define `cw4_0 = (EL 0 cg4.nodes)`;
+Define `cw4_1 = (EL 1 cg4.nodes)`;
+Define `cr4_2 = (EL 2 cg4.nodes)`;
+Define `cw4_3 = (EL 3 cg4.nodes)`;
+Define `cw4_4 = (EL 4 cg4.nodes)`;
+
+
+val cg4_rel0 = prove( ``sequencedBefore cg4 cw4_0 cw4_1``,EVAL_TAC );
+val cg4_rel2 = prove( ``sequencedBefore cg4 cr4_2 cw4_4``, EVAL_TAC );
+
+val cg4_rel1 = prove(
+      ``sequentiallyConsistent cg4 cw4_0 cr4_2``,
+      RW_TAC (srw_ss()) [sequentiallyConsistent_def]
+      ...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -320,7 +502,6 @@ Hand written:
  |_|  |_|___|___/\___|
                       *)
 
-(* You can ignore most these below *)
 
 
 
@@ -338,10 +519,44 @@ EVAL `` readsFrom g0 r0_1 w0_2 ``; (* = F *)
 EVAL `` modifiesBefore g0 w0_0 w0_2 ``; (* = T *)
 EVAL `` synchronizesWith g0 w0_0 w0_2 ``; (* = F *)
 
+EVAL `` r0_1.order = SEQ_CST ``;
 
 
-g `canReadFrom g0 w1_2 r1_3 = T`;
-e (RW_TAC arith_ss [canReadFrom_def, isAtomic_def]);
+g `r0_1.order = SEQ_CST`;
+e (`r0_1.order = SEQ_CST` by EVAL_TAC );
+
+e (
+
+
+g `canReadFrom g0 r0_1 w0_0 = T`;
+e (RW_TAC arith_ss [canReadFrom_def,isAtomic_def]);
+e (`r0_1.order <> NOT_ATOMIC` by EVAL_TAC );
+e (UNDISCH_TAC ``r0_1.order <> NOT_ATOMIC``);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+e (RW_TAC arith_ss [canReadFrom_def, isAtomic_def,visibleTo_def,happensBefore_def,sequencedBefore_def,orderedBefore_def]);
+
+e (`w0_1.order = SEQ_CST` by EVAL_TAC);
 e (EVAL_TAC);
 e (RW_TAC arith_ss []);
 e (`w1_2.order = SEQ_CST` by PROVE_TAC [] );

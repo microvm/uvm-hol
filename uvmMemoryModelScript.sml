@@ -56,6 +56,9 @@ val isRelease_def = Define`
       | SEQ_CST => (n.operation = Wr) ∨ (n.operation = Fn)
       | _       => F`;
 
+val isSeqCst_def = Define`
+    isSeqCst n = (n.order = SEQ_CST)`;
+
 val isAtomic_def = Define`
     isAtomic n = (n.order <> NOT_ATOMIC)`;
 
@@ -168,17 +171,28 @@ val visibleTo_def = Define`
 (* TODO: fix to only look at writes and only return a set given a read *)
 val inVisibleSequenceOf_def = Define` (* TODO: fix to only look at writes and only return a set given a read? *)
     inVisibleSequenceOf g A B =
-      let visible_sequence X = { nd | (nd.address = X.address) ∧
+      let visible_sequence X = { nd | (nd.address = X.address) ∧ (isStore nd) ∧ (isAtomic nd) ∧
                                       (      (visibleTo g nd X) ∨ (* The first in sequence *)
                                              (    ~(happensBefore g X nd) ∧
                                                    (∃fs. (visibleTo g fs X) ∧
                                                         (modifiesBefore g fs nd))))} (* the rest *)
       in A IN (visible_sequence B)    `;
 
+val sequentiallyConsistent_def = Define`
+    sequentiallyConsistent g X B = let isA n = ( (isSeqCst n) ∧ (sameAddress n B) ∧ (orderedBefore g n B) ∧ ~(∃ Y.
+                                       (isSeqCst Y) ∧ (sameAddress Y B) ∧ (orderedBefore g n Y) ∧ (orderedBefore g Y B)))
+      in
+        (∃ A. (isA A) ∧ (
+                (X = A) ∨
+                ( (inVisibleSequenceOf g X B) ∧ ~(isSeqCst X) ∧ ~(happensBefore g X A))  ) ∨
+        ( ~(∃ A. (isA A)) ∧ (inVisibleSequenceOf g X B) ∧ ~(isSeqCst X)))`;
+                                                                                                                  
+
 val canReadFrom_def = Define`
     canReadFrom g A B = (
-      (~(isAtomic A) ∧ ~(isAtomic B) ∧ (visibleTo g B A) ) ∨             (* non-atomic *)
+      (~(isAtomic A) ∧ ~(isAtomic B) ∧ (visibleTo g B A) ) ∨           (* non-atomic *)
       ( (isAtomic A) ∧  (isAtomic B) ∧ (inVisibleSequenceOf g B A) ) ∨ (* atomic *)
+      ( (isSeqCst A) ∧  (sequentiallyConsistent g A B)) ∨                    (* Sequentally Consistent *)
       ( F )                                                                       (* undefined combinations? *)  )`;
 
 
