@@ -1,6 +1,7 @@
 open HolKernel Parse boolLib bossLib;
 
 open uvmIRTheory;
+open lcsymtacs;
 
 val _ = new_theory "uvmMemoryModel";
 
@@ -230,6 +231,154 @@ val resolve = Define`
                                       (canReadFrom g1 w r) ∧ (g2.rf = g1.rf |+ (r, w)) ∧
                                       (msg = Out (THE w.values) (r.mid) (r.thread_id))
 `;
+
+
+
+
+
+
+
+
+
+(* Some properties of the above relations *)
+
+
+(* orderedBefore *)
+val orderedBefore_irreflexivity = prove(
+    ``∀ g nd. ~orderedBefore g nd nd``,
+        rw [orderedBefore_def]);
+val orderedBefore_asymmetry = prove(
+    ``∀ g nd1 nd2. orderedBefore g nd1 nd2 ==> ~orderedBefore g nd2 nd1``,
+        RW_TAC arith_ss [orderedBefore_def]);
+val orderedBefore_transitivity = prove(
+    ``∀ g nd1 nd2 nd3. orderedBefore g nd1 nd2 ∧ orderedBefore g nd2 nd3 ==> orderedBefore g nd1 nd3``,
+        RW_TAC arith_ss [orderedBefore_def]);
+
+
+(* modifiesBefore *)
+val modifiesBefore_irreflexivity = prove(
+    ``∀ g nd. ~modifiesBefore g nd nd``,
+        rw [modifiesBefore_def,orderedBefore_def,sameAddress_def]);
+val modifiesBefore_asymmetry = prove(
+    ``∀ g nd1 nd2. modifiesBefore g nd1 nd2 ==> ~modifiesBefore g nd2 nd1``,
+        RW_TAC arith_ss [modifiesBefore_def,orderedBefore_def,sameAddress_def]);
+val modifiesBefore_transitivity = prove(
+    ``∀ g nd1 nd2 nd3. modifiesBefore g nd1 nd2 ∧ modifiesBefore g nd2 nd3 ==> modifiesBefore g nd1 nd3``,
+        METIS_TAC [modifiesBefore_def,sameAddress_def, orderedBefore_transitivity]);
+
+
+(* sequencedBefore *)
+val sequencedBefore_irreflexivity = prove(
+    ``∀ nd g. ~sequencedBefore g nd nd``,
+        RW_TAC arith_ss [sequencedBefore_def,orderedBefore_def,sameThread_def] );
+val sequencedBefore_asymmetry = prove(
+    ``∀ g nd1 nd2. sequencedBefore g nd1 nd2 ==> ~sequencedBefore g nd2 nd1``,
+        RW_TAC arith_ss [sequencedBefore_def,sameThread_def,orderedBefore_def]);
+val sequencedBefore_transitivity = prove(
+    ``∀ g nd1 nd2 nd3. sequencedBefore g nd1 nd2 ∧ sequencedBefore g nd2 nd3 ==> sequencedBefore g nd1 nd3``,
+        METIS_TAC [sequencedBefore_def,orderedBefore_transitivity,sameThread_def]);
+
+
+(* releaseSequenceOf *)
+val inReleaseSequenceOf_headOrderedBefore = prove(
+    ``∀ A B C g. readsFrom g C B ∧ inReleaseSequenceOf g B A ==> orderedBefore g A C``,
+        METIS_TAC [sequencedBefore_def,
+                   inReleaseSequenceOf_def,
+                   readsFrom_def,AND_IMP_INTRO,
+                   orderedBefore_transitivity]);
+val inReleaseSequenceOf_selfOrderedBefore = prove(
+    ``∀ g A B. inReleaseSequenceOf g A B ∧ (A <> B) ==> orderedBefore g B A``,
+        RW_TAC(srw_ss()) [inReleaseSequenceOf_def,sequencedBefore_def]);
+val inReleaseSequenceOf_reflexivity = prove(
+    ``∀ g A. inReleaseSequenceOf g A A``,
+        RW_TAC (srw_ss()) [inReleaseSequenceOf_def]);
+val inReleaseSequenceOf_asymmetry = prove(
+    ``∀ g A B. inReleaseSequenceOf g A B ∧ (A <> B) ==> ~inReleaseSequenceOf g B A``,
+        METIS_TAC [inReleaseSequenceOf_def, modifiesBefore_def, orderedBefore_asymmetry]);
+val inReleaseSequenceOf_transitivity = prove(
+    ``∀ g A B C. inReleaseSequenceOf g A B ∧ inReleaseSequenceOf g B C ==> inReleaseSequenceOf g A C``,
+        RW_TAC arith_ss [inReleaseSequenceOf_def, orderedBefore_transitivity] THEN
+        METIS_TAC [sequencedBefore_transitivity,modifiesBefore_transitivity]);
+
+(* carriesDependencyTo *)
+val carriesDependencyTo_irreflexivity = prove(
+    ``! g nd. ~carriesDependencyTo g nd nd``,
+        RW_TAC (srw_ss()) [carriesDependencyTo_def, orderedBefore_irreflexivity]);
+
+
+(* synchronizesWith *)
+val synchronizesWith_irreflexivity = prove(
+    ``∀ nd g. ~(synchronizesWith g nd nd)``,
+        RW_TAC (srw_ss()) [synchronizesWith_def] THEN
+        METIS_TAC [readsFrom_def, 
+                   inReleaseSequenceOf_def, 
+                   sequencedBefore_def, 
+                   orderedBefore_def, 
+                   orderedBefore_irreflexivity,
+                   orderedBefore_asymmetry, 
+                   orderedBefore_transitivity, 
+                   inReleaseSequenceOf_selfOrderedBefore]);
+
+
+(* interthreadHappensBefore *)
+val ithb_obf = prove(
+    `` ∀ g X Y. interthreadHappensBefore g X Y ==> orderedBefore g X Y``,
+        cheat);
+  (*  Induct_on `interthreadHappensBefore` >>
+              metis_tac[orderedBefore_TRANS, sequencedBefore_obf,
+                        syncWith_obf])
+              MATCH_MP_TAC ithb_ind
+
+val it_sanity0 = prove(
+`` ∀ nd g. ~ interthreadHappensBefore g nd nd ``,
+metis_tac[ithb_obf, obf_IRREFL]
+    
+    RW_TAC (srw_ss()) [ithb_rules] THEN
+    `~synchronizesWith g nd nd` by METIS_TAC [sw_sanity1]
+    `~dependencyOrderedBefore g nd nd` by METIS_TAC [dob_rules]
+    ...);
+*)
+
+
+(*happensBefore*)
+(*
+g `∀ nd g. ~(happensBefore g nd nd)`;
+METIS_TAC [happensBefore_def, sequencedBefore_def, orderedBefore_def, sameThread_def
+RW_TAC arith_ss [happensBefore_def,sequencedBefore_def,orderedBefore_def, sameThread_def]
+RW_TAC arith_ss [ithb_rules]
+*)
+
+(* visibleSequenceOf *)
+(* Incomplete:
+val in_own_release_seq = prove(
+``∀ g nd. (MEM nd g.nodes) ==> (releaseSequenceOf g nd nd)``,
+RW_TAC arith_ss [releaseSequenceOf_def]
+    RW_TAC arith_ss [releaseSequenceOf_def,modifiesBefore_def,isAtomic_def,isStore_def,sequencedBefore_def,orderedBefore_def,sameAddress_def,sameThread_def] THEN
+e(DISCH_TAC ``orderedBefore g nd1 nd2``);
+e(`nd1.thread_id = nd2.thread_id` by METIS_TAC []);
+e(Cases_on `SOME x'`);
+e(RW_TAC arith_ss []  );
+ *)
+
+(* canReadFrom *)
+(*
+g `canReadFrom g11 r11_1 w11_0 = T`;
+e (RW_TAC arith_ss [canReadFrom_def,isAtomic_def]);
+e (`r11_1.order <> NOT_ATOMIC` by EVAL_TAC );
+e (UNDISCH_TAC ``r11_1.order <> NOT_ATOMIC``);
+e (RW_TAC arith_ss [canReadFrom_def, isAtomic_def,visibleTo_def,happensBefore_def,sequencedBefore_def,orderedBefore_def]);
+e (`w11_1.order = SEQ_CST` by EVAL_TAC);
+e (EVAL_TAC);
+e (RW_TAC arith_ss []);
+e (`w11_2.order = SEQ_CST` by PROVE_TAC [] );
+e (Cases_on `w11_2.order` THEN Cases_on `r11_3.order`);
+(* HOW DO I SIMPLIFY w1_2.order to SEQ_CST? *)
+e (SIMP_TAC (srw_ss()) [node_accessors, memoryorder_distinct]);
+(*e (`w1_2.order <> NOT_ATOMIC` by DECIDE_TAC);*)
+g `inVisibleSequenceOf g11 r11_3 w11_2`;
+e (RW_TAC (srw_ss()) [inVisibleSequenceOf_def]);
+*)
+
 
 
 val _ = export_theory();

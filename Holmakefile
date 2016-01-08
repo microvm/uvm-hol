@@ -1,6 +1,6 @@
 
 
-# I got this from a Holmakefile found on Github. I think it just lists all files in the directory that need building.
+# I got this from a Holmakefile found on Github. It seems to work as intended.
 THYFILES = $(patsubst %Script.sml,%Theory.uo,$(wildcard *.sml))
 TARGETS = $(patsubst %.sml,%.uo,$(THYFILES))
 
@@ -9,5 +9,5 @@ all: $(TARGETS)
 clean:
 	Holmake --no_holmakefile clean && cd tests && Holmake clean
 
-tests: uvmMemoryModelTheory.uo
+tests: uvmSystemTheory.uo
 	cd tests && Holmake clean && Holmake --holmakefile Holmakefile
