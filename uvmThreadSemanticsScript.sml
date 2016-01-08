@@ -5,33 +5,7 @@ open lcsymtacs
 open monadsyntax
 
 val _ = new_theory "uvmThreadSemantics";
-val _ = type_abbrev("tid", ``:num``)
-val _ = type_abbrev("addr", ``:num``)  (* non-local memory addresses *)
-                   
-(*tmp: ==========================================================*)
-val _ = type_abbrev("float32", ``:num``)
-val _ = type_abbrev("float64", ``:num``)
-val _ = type_abbrev("int",     ``:num``)
-(*===============================================================*)
 
-val _ = type_abbrev("memreqid", ``:num``)
-val _ = type_abbrev("memdeps", ``:memreqid set``)
-
-
-val _ = Datatype`
-   value =
-     Int num int
-   | IRef uvmType addr
-   | FloatV float32
-   | DoubleV float64
-   (* not sure if these are storable-in-register values
-   | StructV (value list)
-   | ArrayV (value list)
-   | Hybrid (value list) (value list) *)
-   | VectorV (value list)
-   | FuncRefV addr
-   | UFuncRefV addr
-`;
 
 val _ = Datatype`
   frame = <|
@@ -52,11 +26,6 @@ val _ = type_abbrev(
   "respt_pair", ``:resumption_point # resumption_point option``)
 
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
-
-val _ = Datatype`
-  memoryMessage = Read  addr memreqid memoryorder memdeps
-                | Write addr memreqid value    memoryorder memdeps
-`;
 
 val _ = Datatype`
   threadState = <|
@@ -167,11 +136,16 @@ val readVar_def = Define`
     od
 `
 
+val optLift_def = Define`
+optLift NONE = TSDIE
+               /\
+optLift (SOME x) = return x`;
+
 val evalbop_def = Define`
   evalbop bop v1 v2 : (value list) TSM =
    case bop of
-     Add => return [v1 + v2]
-   | Sdiv => if v2 ≠ 0 then return [v1 DIV v2] else TSDIE
+       Add => (do v <- optLift (value_add v1 v2) ; return [v] od)
+     | Sdiv => (do v <- optLift (value_div v1 v2) ; return [v] od)
 `;
 
 val eval_exp_def = Define`
@@ -223,13 +197,15 @@ val exec_inst_def = Define`
         od
     | Load destvar isiref srcvar morder =>
         do
-           (a, depa) <- readVar srcvar ;
+           (av, depa) <- readVar srcvar ;
+           a <- optLift (value_to_address av) ;
            TSLOAD destvar (a,depa) morder
         od
     | Store srcvar isiref destvar morder =>
         do
            (v,depv) <- readVar srcvar ;
-           (a,depa) <- readVar destvar ;
+           (av,depa) <- readVar destvar ;
+           a <- optLift (value_to_address av) ;
            TSSTORE (v,depv) (a,depa) morder
         od
 `

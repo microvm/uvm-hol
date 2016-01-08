@@ -1,8 +1,6 @@
-
 open HolKernel Parse boolLib bossLib;
 
 open uvmIRTheory;
-open uvmThreadSemanticsTheory;
 
 val _ = new_theory "uvmMemoryModel";
 
@@ -130,8 +128,8 @@ val inReleaseSequenceOf_def = Define`
 val releaseSequenceOf_def = Define` (* TODO: include read-write ops *)
     releaseSequenceOf g A = { B | (B = A) ∨ ((modifiesBefore g A B) ∧ (isAtomic B) ∧ (isStore B) ∧ ((sequencedBefore g A B) ∨ (F) )  )}   `;
 
-val carriesDependencyTo = Define`
-    carriesDependencyTo g B A = (B.mid IN A.ddeps)`;
+val carriesDependencyTo_def = Define`
+    carriesDependencyTo g B A = ((B.mid IN A.ddeps) ∧ (orderedBefore g B A))`;
 (* This should be worked out within the thread? *)
 (* val (cdep_rules, cdep_ind, cdep_cases) = Hol_reln` (* This might not be how reln is supposed to work *)
     (∀ g B A. (A.mid IN B.ddeps) ==> (carriesDependencyTo g B A)) ∧
@@ -235,48 +233,3 @@ val resolve = Define`
 
 
 val _ = export_theory();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-(*
-
-Here lie the old Hol_defns, to be removed when the Hol_relns are confirmed and checked.
-
-
-val dependencyOrderedBefore = Hol_defn "dependencyOrderedBefore" `
-    dependencyOrderedBefore g A B = ( (A IN g.nodes) ∧ (B IN g.nodes) ∧
-        (*1.*) ( (isRelease A) ∧ (sameAddress A B) ∧ ~(sameThread A B) ∧ (isConsume B) ∧ (∃ X. (X IN (releaseSequenceOf g A)) ∧ (readsFrom g B X) )) ∨
-        (*2.*) (∃ X. (dependencyOrderedBefore g A X) ∧ (carriesDependencyTo g X B))     )`;
-
-
-(* TODO: turn into Hol_reln *)
-val carriesDependencyTo = Hol_defn "carriesDependencyTo" `
-    carriesDependencyTo g B A = (
-      (*1.*) (A.mid IN B.ddeps) ∨
-      (*2.*) (∃ X. (sequencedBefore g A X) ∧ (sequencedBefore g X B) ∧ (isStore X) ∧ (isLoad B) ∧ (sameAddress X B) ∧ (A.mid IN X.ddeps)) ∨
-      (*3.*) (∃ X. (carriesDependencyTo g A X) ∧ (carriesDependencyTo g X B))   )`;
-
-
-val interthreadHappensBefore = Hol_defn "interthreadHappensBefore" `
-    (interthreadHappensBefore g A B) = ( (A IN g.nodes) ∧ (B IN g.nodes) ∧ (
-      (*A.*) (synchronizesWith g A B) ∨
-      (*B.*) (dependencyOrderedBefore g A B) ∨
-      (*C.*) (∃ X. X IN g.nodes ∧
-               (*1.*) (( synchronizesWith g A X ∧ sequencedBefore g X B) ∨
-               (*2.*) ( sequencedBefore g A X ∨ interthreadHappensBefore g X B) ∨ 
-               (*3.*)( interthreadHappensBefore g A X ∨ interthreadHappensBefore g X B)))   ))`;
-
-
-*)
-

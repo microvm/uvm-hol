@@ -1,6 +1,7 @@
 open HolKernel Parse boolLib bossLib;
 
-open uvmTypesTheory
+open uvmTypesTheory;
+open uvmValuesTheory;
 
 val _ = new_theory "uvmIR";
 
@@ -8,7 +9,9 @@ val _ = type_abbrev ("SSAVar", ``:string``)
 
 val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
-val _ = type_abbrev ("value", ``:num``) (* FIXME *)
+(*val _ = type_abbrev ("valu", ``:num``) (* FIXME *)*)
+
+
 val _ = type_abbrev ("trapData", ``:num``)
 
 val _ = Datatype`
@@ -215,5 +218,27 @@ val _ = Datatype`
   | FunctionSignature signame uvmType (uvmType list)
   | FuncDef fnname signame label (label |-> bblock)
 `
+
+
+
+
+
+val _ = type_abbrev("tid", ``:num``)
+
+val _ = type_abbrev("memreqid", ``:num``)
+val _ = type_abbrev("memdeps", ``:memreqid set``)
+
+
+
+val _ = Datatype`
+  memoryMessage = Read  addr memreqid memoryorder memdeps
+                | Write addr memreqid value    memoryorder memdeps
+`;
+
+
+
+
+
+
 
 val _ = export_theory();
