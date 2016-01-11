@@ -1,10 +1,5 @@
-
-
-# I got this from a Holmakefile found on Github. It seems to work as intended.
-THYFILES = $(patsubst %Script.sml,%Theory.uo,$(wildcard *.sml))
-TARGETS = $(patsubst %.sml,%.uo,$(THYFILES))
-
-all: $(TARGETS)
+all:
+	Holmake --no_holmakefile
 
 clean:
 	Holmake --no_holmakefile clean && cd tests && Holmake clean
