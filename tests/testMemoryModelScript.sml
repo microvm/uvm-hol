@@ -1,5 +1,4 @@
 open HolKernel Parse boolLib bossLib;
-
 load "../uvmSystemTheory";
 open uvmSystemTheory;
 open uvmMemoryModelTheory;
@@ -7,7 +6,6 @@ open uvmMemoryModelTheory;
 val _ = new_theory "testMemoryModel";
 
 
-(* {{{ *)
 
 (* I define an alternate receive that's not a relation *)
 val receive' = Define`
@@ -28,44 +26,16 @@ val resolve' = Define`
 
 Define `empty = <| nodes:=[]; rf:=FEMPTY |>`;
 
-(* Relations for UNDEFINED BEHAVIOUR *)
-val dataRace_def = Define`
-    dataRace g A B = (
-      ~(sameThread A B)              ∧
-       (sameAddress A B)            ∧
-       ( (isStore A) ∨ (isStore B) ) ∧
-      ~(happensBefore g A B)         ∧
-      ~(happensBefore g B A)
- )`;
-
-(* not possible in uvm-ir? *)
-val unsequencedRace_def = Define`
-    unsequencedRace g A B = (
-       (sameThread A B)              ∧
-       (sameAddress A B)             ∧
-       ( (isStore A) ∨ (isStore B) ) ∧
-      ~(sequencedBefore g A B)       ∧
-      ~(sequencedBefore g B A)
-)`;
-
-
+(* Abbreviation for defining 8-bit Ints *)
 val n = Define`n m = (Int m 8)`;
 
-(* sameAddress *)
-val ad_sanity_0 = prove( ``∀nd. (sameAddress nd nd)``, EVAL_TAC THEN RW_TAC (srw_ss()) []);
-
-
-(* }}} *)
 
 
 
 
-(* ___ _ _ __| |___ _ _ ___ __| | _ ) ___ / _|___ _ _ ___ 
-  / _ \ '_/ _` / -_) '_/ -_) _` | _ \/ -_)  _/ _ \ '_/ -_)
-  \___/_| \__,_\___|_| \___\__,_|___/\___|_| \___/_| \___|  *)
 
-(* {{{ *)
 
+(* EXAMPLE 1: orderedBefore, modifiesBefore, sequencedBefore *)
 Define `g0= FOLDL (receive') empty
          [
             ( Write 10 0 (n 11) NOT_ATOMIC {} , 0) ;
@@ -75,73 +45,52 @@ Define `g0= FOLDL (receive') empty
          ]`;
 Define `w0_0 = (EL 0 g0.nodes)`; Define `r0_1 = (EL 1 g0.nodes)`; Define `w0_2 = (EL 2 g0.nodes)`;
 Define `w0_3 = (EL 3 g0.nodes)`;
+(* orderedBefore *)
+val g0_ob0 = prove(``orderedBefore g0 r0_1 w0_2``, EVAL_TAC);
+val g0_ob1 = prove(``orderedBefore g0 w0_0 r0_1``, EVAL_TAC);
+val g0_ob2 = prove(``~orderedBefore g0 r0_1 w0_0``, EVAL_TAC);
+(* modifiesBefore *)
+val g0_mb0 = prove(`` modifiesBefore g0 w0_2 w0_3``, EVAL_TAC);
+val g0_mb1 = prove(`` modifiesBefore g0 w0_0 w0_2``, EVAL_TAC);
+val g0_mb3 = prove(`` modifiesBefore g0 w0_0 w0_3``, EVAL_TAC);
+val g0_mb2 = prove(``~modifiesBefore g0 w0_0 r0_1``, EVAL_TAC);
+(* sequencedBefore *)
+val g0_sb1 = prove(`` sequencedBefore g0 r0_1 w0_2 ``, EVAL_TAC);
+val g0_sb2 = prove(`` sequencedBefore g0 w0_2 w0_3 ``, EVAL_TAC);
+val g0_sb3 = prove(`` sequencedBefore g0 r0_1 w0_3 ``, EVAL_TAC);
+val g0_sb0 = prove(``~sequencedBefore g0 w0_0 r0_1 ``, EVAL_TAC);
 
 
-(* Specific *)
-val ob_eg0 = prove(``orderedBefore g0 r0_1 w0_2``, EVAL_TAC);
-val ob_eg1 = prove(``orderedBefore g0 w0_0 r0_1``, EVAL_TAC);
-val ob_eg2 = prove(``~orderedBefore g0 r0_1 w0_0``, EVAL_TAC);
 
-(* General *)
-
-(* }}} *)
-
-(* _ __  ___  __| (_)/ _(_)___ __| _ ) ___ / _|___ _ _ ___ 
-  | '  \/ _ \/ _` | |  _| / -_|_-< _ \/ -_)  _/ _ \ '_/ -_)
-  |_|_|_\___/\__,_|_|_| |_\___/__/___/\___|_| \___/_| \___|  *)
-
-(* {{{ *)
-
-val mb_eg0 = prove(`` modifiesBefore g0 w0_2 w0_3``, EVAL_TAC);
-val mb_eg1 = prove(`` modifiesBefore g0 w0_0 w0_2``, EVAL_TAC);
-val mb_eg2 = prove(``~modifiesBefore g0 w0_0 r0_1``, EVAL_TAC);
-val mb_eg2 = prove(`` modifiesBefore g0 w0_0 w0_3``, EVAL_TAC);
-
-(* }}} *)
-
-(* ___ ___ __ _ _  _ ___ _ _  __ ___ __| | _ ) ___ / _|___ _ _ ___ 
-  (_-</ -_) _` | || / -_) ' \/ _/ -_) _` | _ \/ -_)  _/ _ \ '_/ -_)
-  /__/\___\__, |\_,_\___|_||_\__\___\__,_|___/\___|_| \___/_| \___|
-            |_|                                                    *)
-(* {{{ *)
-
-Define `g2= FOLDL (receive') empty
-         [                                            (* int main() {   *)
+(* EXAMPLE 2: sequencedBefore     (taken from POPL, p. 3) *)
+Define `g1'= FOLDL (receive') empty
+         [                                                (* int main() {   *)
            ( Write 10 0 (n 2) NOT_ATOMIC    {} , 1 ) ;    (*   int x = 2    *)
            ( Write 20 1 (n 0) NOT_ATOMIC    {} , 1 ) ;    (*   int y = 0    *)
            ( Read  10 2       NOT_ATOMIC    {} , 1 ) ;    (*   y = (x == x) *)
            ( Read  10 3       NOT_ATOMIC    {} , 1 ) ;
            ( Write 20 4 (n 1) NOT_ATOMIC {2;3} , 1 )
          ]`;                                          (*   return 0;    *)
-Define `w2_0 = (EL 0 g2.nodes)`; Define `w2_1 = (EL 1 g2.nodes)`; Define `r2_2 = (EL 2 g2.nodes)`;
-Define `r2_3 = (EL 3 g2.nodes)`; Define `w2_4 = (EL 4 g2.nodes)`;
-
-(* All the arrows defined in the example's diagram: *)
-val cg0_rel0 = prove( ``sequencedBefore g2 w2_0 w2_1``,EVAL_TAC);
-val cg0_rel1 = prove( ``sequencedBefore g2 w2_1 r2_2``,EVAL_TAC);
-val cg0_rel2 = prove( ``sequencedBefore g2 w2_1 r2_3``,EVAL_TAC);
-val cg0_rel3 = prove( ``sequencedBefore g2 r2_2 w2_4``,EVAL_TAC);
-val cg0_rel4 = prove( ``sequencedBefore g2 r2_3 w2_4``,EVAL_TAC);
-
-(* }}} *)
-
-(*        _                  ___                                 ___   __ 
-  _ _ ___| |___ __ _ ___ ___/ __| ___ __ _ _  _ ___ _ _  __ ___ / _ \ / _|
- | '_/ -_) / -_) _` (_-</ -_)__ \/ -_) _` | || / -_) ' \/ _/ -_) (_) |  _|
- |_| \___|_\___\__,_/__/\___|___/\___\__, |\_,_\___|_||_\__\___|\___/|_|  
-                                        |_|                                *)
-(* {{{ *)
+Define `w1_0 = (EL 0 g1'.nodes)`; Define `w1_1 = (EL 1 g1'.nodes)`; Define `r1_2 = (EL 2 g1'.nodes)`;
+Define `r1_3 = (EL 3 g1'.nodes)`; Define `w1_4 = (EL 4 g1'.nodes)`;
+Define `g1'' = resolve' g1'  r1_2 w1_0`;
+Define `g1   = resolve' g1'' r1_3 w1_0`;
+(* sequencedBefore *)
+val g1_sb0 = prove(`` sequencedBefore g1 w1_0 w1_1``,EVAL_TAC);
+val g1_sb1 = prove(`` sequencedBefore g1 w1_1 r1_2``,EVAL_TAC);
+val g1_sb2 = prove(`` sequencedBefore g1 w1_1 r1_3``,EVAL_TAC);
+val g1_sb3 = prove(`` sequencedBefore g1 r1_2 w1_4``,EVAL_TAC);
+val g1_sb4 = prove(`` sequencedBefore g1 r1_3 w1_4``,EVAL_TAC);
+(* readsFrom *)
+val g1_rf0 = prove( ``readsFrom g1 r1_2 w1_0``, EVAL_TAC);
+val g1_rf1 = prove( ``readsFrom g1 r1_3 w1_0``, EVAL_TAC);
 
 
-(* }}} *)
+(* releaseSequenceOf *)
 
-(*                _        ___                        _                 _____    
-  __ __ _ _ _ _ _(_)___ __|   \ ___ _ __  ___ _ _  __| |___ _ _  __ _  |_   _|__ 
- / _/ _` | '_| '_| / -_|_-< |) / -_) '_ \/ -_) ' \/ _` / -_) ' \/ _| || || |/ _ \
- \__\__,_|_| |_| |_\___/__/___/\___| .__/\___|_||_\__,_\___|_||_\__|\_, ||_|\___/
-                                   |_|                              |__/         *)
-(* {{{ *)
 
+
+(* carriesDependencyTo *)
 Define `g4= FOLDL (receive') empty
          [
             ( Read  10 0       ACQUIRE    {} , 1) ;
@@ -150,15 +99,10 @@ Define `g4= FOLDL (receive') empty
 Define `r4_0 = (EL 0 g4.nodes)`; Define `w4_1 = (EL 1 g4.nodes)`;
 
 val cd_rel0 = prove(``carriesDependencyTo g4 r4_0 w4_1``, EVAL_TAC);
-(* }}} *)
 
-(*                _                 _          __      ___ _   _    
-  ____  _ _ _  __| |_  _ _ ___ _ _ (_)______ __\ \    / (_) |_| |_  
- (_-< || | ' \/ _| ' \| '_/ _ \ ' \| |_ / -_|_-<\ \/\/ /| |  _| ' \ 
- /__/\_, |_||_\__|_||_|_| \___/_||_|_/__\___/__/ \_/\_/ |_|\__|_||_|
-     |__/                                                            *)
-(* {{{ *)
 
+
+(* synchronizesWith *)
 Define `g5'= FOLDL (receive') empty
          [
             ( Write 10 0 (n 1) NOT_ATOMIC {} , 0) ;
@@ -169,7 +113,6 @@ Define `g5'= FOLDL (receive') empty
 Define `w5_0 = (EL 0 g5'.nodes)`; Define `w5_1 = (EL 1 g5'.nodes)`;
 Define `r5_2 = (EL 2 g5'.nodes)`; Define `r5_3 = (EL 3 g5'.nodes)`;
 Define `g5 = resolve' g5' r5_2 w5_1`; 
-
 val sw_rel0 = prove(`` sequencedBefore  g5 w5_0 w5_1 ``, EVAL_TAC );
 val sw_rel1 = prove(`` synchronizesWith g5 w5_1 r5_2 ``,
     RW_TAC (srw_ss()) [synchronizesWith_def] THEN
@@ -185,15 +128,9 @@ val sw_rel4 = prove(``(happensBefore g5 w5_0 r5_3)``,
                     METIS_TAC [sw_rel1, ithb_rules] );
 val sw_unrel_5 = prove( `` ~(synchronizesWith g5 w5_0 w5_1) ``, EVAL_TAC);
 
-(* }}} *)
 
-(*   _           ___         _                _ ___       __             
-  __| |___ _ __ / _ \ _ _ __| |___ _ _ ___ __| | _ ) ___ / _|___ _ _ ___ 
- / _` / -_) '_ \ (_) | '_/ _` / -_) '_/ -_) _` | _ \/ -_)  _/ _ \ '_/ -_)
- \__,_\___| .__/\___/|_| \__,_\___|_| \___\__,_|___/\___|_| \___/_| \___|
-          |_|                                                             *)
-(* {{{ *)
 
+(* dependencyOrderedBefore *)
 Define `g6'= FOLDL (receive') empty
          [
             ( Write 10 0 (n 1) RELEASE    {} , 0) ;
@@ -204,22 +141,12 @@ Define `g6'= FOLDL (receive') empty
 Define `w6_0 = (EL 0 g6'.nodes)`; Define `w6_1 = (EL 1 g6'.nodes)`;
 Define `r6_2 = (EL 2 g6'.nodes)`; Define `r6_3 = (EL 3 g6'.nodes)`;
 Define `g6 = resolve' g6' r6_2 w6_1`; 
-(*
-val do_rel0 = prove(``dependencyOrderedBefore g6 w6_1 r6_2``, 
-                   );
+(*val do_rel0 = prove(``dependencyOrderedBefore g6 w6_1 r6_2``, );
+val do_self = prove(`` ∀ nd g. ~dependencyOrderedBefore g nd nd``, );*)
 
-val do_self = prove(`` ∀ nd g. ~dependencyOrderedBefore g nd nd``,
-                   );
-*)
-(* }}} *)
 
-(*_     _           _  _                             ___       __             
- (_)_ _| |_ ___ _ _| || |__ _ _ __ _ __  ___ _ _  __| _ ) ___ / _|___ _ _ ___ 
- | | ' \  _/ -_) '_| __ / _` | '_ \ '_ \/ -_) ' \(_-< _ \/ -_)  _/ _ \ '_/ -_)
- |_|_||_\__\___|_| |_||_\__,_| .__/ .__/\___|_||_/__/___/\___|_| \___/_| \___|
-                             |_|  |_|                                          *)
-(* {{{ *)
 
+(* interthreadHappensBefore *)
 Define `g7'= FOLDL (receive') empty
          [
             ( Write 10 0 (n 1) NOT_ATOMIC {} , 0) ;
@@ -230,16 +157,7 @@ Define `g7'= FOLDL (receive') empty
 
 
 
- 
- (* }}} *)
-    
-(*_                                ___       __             
- | |_  __ _ _ __ _ __  ___ _ _  __| _ ) ___ / _|___ _ _ ___ 
- | ' \/ _` | '_ \ '_ \/ -_) ' \(_-< _ \/ -_)  _/ _ \ '_/ -_)
- |_||_\__,_| .__/ .__/\___|_||_/__/___/\___|_| \___/_| \___|
-           |_|  |_|                                          *)
-(* {{{ *)
-
+(* happensBefore *)
 Define `g8 = FOLDL (receive') empty
          [
             ( Write 1024 0 (n 11) SEQ_CST    {} , 1) ;
@@ -247,25 +165,11 @@ Define `g8 = FOLDL (receive') empty
             ( Write 1024 2 (n 10) SEQ_CST    {} , 1)
          ]`;
 Define `w8_0 = (EL 0 g8.nodes)`; Define `r8_1 = (EL 1 g8.nodes)`; Define `w8_2 = (EL 2 g8.nodes)`;
-
-
 val hb_rel0 = prove( `` happensBefore g8 w8_0 r8_1``, EVAL_TAC);
 
 
 
-
-
-
-
-(* }}} *)
-
-(*    _    _ _    _    _____    
- __ _(_)__(_) |__| |__|_   _|__ 
- \ V / (_-< | '_ \ / -_)| |/ _ \
-  \_/|_/__/_|_.__/_\___||_|\___/ *)
-
-(* {{{ *)
-
+(* visibleTo *)
 Define `g9= FOLDL (receive') empty
          [
             ( Write 10 0 (n 1) NOT_ATOMIC    {} , 0) ;
@@ -275,25 +179,13 @@ Define `g9= FOLDL (receive') empty
 Define `w9_0 = (EL 0 g9.nodes)`; Define `w9_1 = (EL 1 g9.nodes)`;
 Define `r9_2 = (EL 2 g9.nodes)`;
 
-(* }}} *)
-
-(*    _    _ _    _     ___                                 ___   __ 
- __ _(_)__(_) |__| |___/ __| ___ __ _ _  _ ___ _ _  __ ___ / _ \ / _|
- \ V / (_-< | '_ \ / -_)__ \/ -_) _` | || / -_) ' \/ _/ -_) (_) |  _|
-  \_/|_/__/_|_.__/_\___|___/\___\__, |\_,_\___|_||_\__\___|\___/|_|  
-                                   |_|                                *)
-(* {{{ *)
 
 
-(* }}} *)
+(* inVisibleSequenceOf *)
 
-(*             ___             _ ___              
-  __ __ _ _ _ | _ \___ __ _ __| | __| _ ___ _ __  
- / _/ _` | ' \|   / -_) _` / _` | _| '_/ _ \ '  \ 
- \__\__,_|_||_|_|_\___\__,_\__,_|_||_| \___/_|_|_|
-                                                   *)
-(* {{{ *)
 
+
+(* canReadFrom*)
 Define `g11= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
          [
             ( Write 1024 0 (n 11) SEQ_CST    {} , 1) ;
@@ -302,15 +194,9 @@ Define `g11= FOLDL (receive') <| nodes:=[]; rf:=FEMPTY |>
          ]`;
 Define `w11_0 = (EL 0 g11.nodes)`; Define `r11_1 = (EL 1 g11.nodes)`; Define `w11_2 = (EL 2 g11.nodes)`;
 
-(* }}} *)
 
-(*___ ___ ___     ___ ___ _____ 
- / __| __/ _ \   / __/ __|_   _|
- \__ \ _| (_) | | (__\__ \ | |  
- |___/___\__\_\  \___|___/ |_|   *)
 
-(* {{{ *)
-
+(* SEQ_CST *)
 (*
 int main() {
   atomic_int x;
@@ -350,5 +236,35 @@ val cg4_rel1 = prove(
 *)
 
 (* }}} *)
-      
+
+
+
+
+
+
+
+(* Relations for UNDEFINED BEHAVIOUR *)
+val dataRace_def = Define`
+    dataRace g A B = (
+      ~(sameThread A B)              ∧
+       (sameAddress A B)            ∧
+       ( (isStore A) ∨ (isStore B) ) ∧
+      ~(happensBefore g A B)         ∧
+      ~(happensBefore g B A)
+ )`;
+
+(* not possible in uvm-ir? *)
+val unsequencedRace_def = Define`
+    unsequencedRace g A B = (
+       (sameThread A B)              ∧
+       (sameAddress A B)             ∧
+       ( (isStore A) ∨ (isStore B) ) ∧
+      ~(sequencedBefore g A B)       ∧
+      ~(sequencedBefore g B A)
+)`;
+
+
+
+
+
 val _ = export_theory();
