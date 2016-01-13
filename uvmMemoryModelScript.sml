@@ -76,38 +76,6 @@ val indexOf_def = Define`
 
 
 
-
-(* Set of relations that are used to define `receive` and `resolve`:
-
- * ordered_before              [✓]
- * modifies_before             [✓]
- * sequenced_before            [✓]
- * release_sequence_of         [✓] : missing wrm
- * carries_dependency_to       [✓]
-
-
-
-
- * synchronizes_with           [ ] : missing fences, mutex, thread creation
- * dependency_ordered_before   [✓]
- * interthread_happens_before  [✓]
- * happens_before              [✓]
- * visible_to                  [✓]
- * visible_sequence_of         [~] : change format
-
-(* can_read_from *)            [✓]
-(* readsFrom *)                [✓]
-
- * receive                     [~]
- * resolve                     [~]
-
- ? Undefined behaviour         [?]
-
-
- *)
-
-
-
 (* Undefined for missing items *)
 val orderedBefore_def = Define`
     orderedBefore g A B = ((THE (indexOf g.nodes 0 A)) < (THE (indexOf g.nodes 0 B)))`;
@@ -116,7 +84,7 @@ val orderedBefore_def = Define`
                             | _ => (F)  `;*)
 
 val isReadBy_def = Define`
-    isReadBy g A B = ((FLOOKUP g.rf B = SOME A) ∧ (orderedBefore g A B))`;
+    isReadBy g A B = (FLOOKUP g.rf B = SOME A)`;
 
 val modifiesBefore_def = Define`
     modifiesBefore g A B = ( (orderedBefore g A B) ∧ (sameAddress A B) ∧ (isStore A) ∧ (isStore B))`;
@@ -130,7 +98,7 @@ val releaseSequenceOf_def = Define` (* TODO: include read-write ops *)
     releaseSequenceOf g A = { B | (B = A) ∨ ((modifiesBefore g A B) ∧ (isAtomic B) ∧ (isStore B) ∧ ((sequencedBefore g A B) ∨ (F) )  )}   `;
 
 val carriesDependencyTo_def = Define`
-    carriesDependencyTo g B A = ((B.mid IN A.ddeps) ∧ (orderedBefore g B A))`;
+    carriesDependencyTo g A B = (A.mid IN B.ddeps)`;
 (* This should be worked out within the thread? *)
 (* val (cdep_rules, cdep_ind, cdep_cases) = Hol_reln` (* This might not be how reln is supposed to work *)
     (∀ g B A. (A.mid IN B.ddeps) ==> (carriesDependencyTo g B A)) ∧
@@ -187,11 +155,11 @@ val sequentiallyConsistent_def = Define`
         ( ~(∃ A. (isA A)) ∧ (inVisibleSequenceOf g X B) ∧ ~(isSeqCst X)))`;
                                                                                                                   
 
-val canReadFrom_def = Define`
-    canReadFrom g A B = (
+val canBeReadBy_def = Define`
+    canBeReadBy g B A = (
       (~(isAtomic A) ∧ ~(isAtomic B) ∧ (visibleTo g B A) ) ∨           (* non-atomic *)
       ( (isAtomic A) ∧  (isAtomic B) ∧ (inVisibleSequenceOf g B A) ) ∨ (* atomic *)
-      ( (isSeqCst A) ∧  (sequentiallyConsistent g A B)) ∨                    (* Sequentally Consistent *)
+      ( (isSeqCst B) ∧  (sequentiallyConsistent g B A)) ∨                    (* Sequentally Consistent *)
       ( F )                                                                       (* undefined combinations? *)  )`;
 
 
@@ -209,7 +177,7 @@ val canReadFrom_def = Define`
 (*******************************************************************************)
 
 (* Receive input message, create new nodes from these messages *)
-val receive = Define`
+val receive_def = Define`
     receive (inGraph, (msg, ttid)) graph' = case msg of
       Read a' id order' dep => let new_node = <| operation := Rd ;
                                              address := a' ;
@@ -232,43 +200,66 @@ val receive = Define`
 `;
 
 (* TODO: output message *)
-val resolve = Define`
+val resolve_def = Define`
     resolve g1 (msg, g2) = ∃ w r. (g1.nodes = g2.nodes) ∧ (* TODO: maybe update r's value? *)
-                                      (canReadFrom g1 w r) ∧ (g2.rf = g1.rf |+ (r, w)) ∧
-                                      (msg = Out (THE w.values) (r.mid) (r.thread_id))
+                                  (canBeReadBy g1 w r) ∧ (g2.rf = g1.rf |+ (r, w)) ∧
+                                  (~∃ w'. FLOOKUP g1.rf r = SOME w') ∧
+                                  (msg = Out (THE w.values) (r.mid) (r.thread_id))
 `;
 
 
+(***********************************)
+(* Defined and Undefined Behaviour *)
+(***********************************)
+val dataRace_def = Define`
+    dataRace g A B = (
+       (sameAddress A B)            ∧
+       ( (isStore A) ∨ (isStore B) ) ∧
+      ~(happensBefore g A B)         ∧
+      ~(happensBefore g B A)
+ )`;
 
+val wellFormed_def = Define`
+    wellFormed g = (
+        (∀ A B. carriesDependencyTo g A B ==>  orderedBefore g A B) ∧
+        (∀ A B. isReadBy g A B ==> canBeReadBy g A B)
+)`;
+
+val consistent_def = Define`
+    consistent g = (wellFormed g ∧ ~∃ A B. (MEM A g.nodes) ∧ (MEM B g.nodes) ∧ (dataRace g A B))`;
 
 
 (*************************************************************)
 (* Proofs for some properties of the relations defined above *)
 (*************************************************************)
 
-val impliesOrderedBefore_def = Define`
-    impliesOrderedBefore p = ∀ g A B. p g A B ==> orderedBefore g A B`;
-val transitive_def = Define`
+val impliesOB_def = Define`
+    impliesOrderedBefore p = ∀ g A B. wellFormed g ∧ p g A B ==> orderedBefore g A B`;
+val trans_def = Define`
     transitive p = ∀ A B C. p A B ∧ p B C ==> p A C`;
+val asym_def = Define`
+    assymetric p = ∀ A B. p A B ==> ~p B A`;
+val irrefl_def = Define`
+    irreflexive p = ∀ A. ~p A A`;
 
 (* orderedBefore *)
 val orderedBefore_irreflexivity = prove(
-    ``∀ g nd. ~orderedBefore g nd nd``,
-        rw [orderedBefore_def]);
+    ``∀ g. irreflexive (orderedBefore g)``,
+        rw [irrefl_def, orderedBefore_def]);
 val orderedBefore_asymmetry = prove(
-    ``∀ g nd1 nd2. orderedBefore g nd1 nd2 ==> ~orderedBefore g nd2 nd1``,
-        RW_TAC arith_ss [orderedBefore_def]);
+    ``∀ g. assymetric (orderedBefore g)``,
+        RW_TAC arith_ss [asym_def,orderedBefore_def]);
 val orderedBefore_transitivity = prove(
     ``∀g. transitive (orderedBefore g)``,
-        RW_TAC arith_ss [transitive_def,orderedBefore_def]);
+        RW_TAC arith_ss [trans_def,orderedBefore_def]);
 
 (* From here on, if something implies orderedBefore then it is also irreflexive and assymetrical *)
 
 
 (* Some properties of the above relations *)
-val isReadBy_orderedBefore = prove(
+(*val isReadBy_orderedBefore = prove(
     ``impliesOrderedBefore isReadBy``,
-    RW_TAC (srw_ss()) [impliesOrderedBefore_def, isReadBy_def]);
+    RW_TAC (srw_ss()) [wellFormed_def,impliesOB_def]);*)
 
 
 (* modifiesBefore *)
@@ -277,7 +268,7 @@ val modifiesBefore_orderedBefore = prove(
         RW_TAC (srw_ss()) [modifiesBefore_def]);
 val modifiesBefore_transitivity = prove(
     ``∀ g. transitive (modifiesBefore g)``,
-        METIS_TAC [transitive_def, modifiesBefore_def,sameAddress_def, orderedBefore_transitivity]);
+        METIS_TAC [trans_def, modifiesBefore_def,sameAddress_def, orderedBefore_transitivity]);
 
 
 (* sequencedBefore *)
@@ -286,98 +277,135 @@ val sequencedBefore_orderedBefore = prove(
         RW_TAC (srw_ss()) [sequencedBefore_def]);
 val sequencedBefore_transitivity = prove(
     ``∀ g. transitive (sequencedBefore g)``,
-        METIS_TAC [transitive_def, sequencedBefore_def,orderedBefore_transitivity,sameThread_def]);
+        METIS_TAC [trans_def, sequencedBefore_def,orderedBefore_transitivity,sameThread_def]);
 
 
 (* releaseSequenceOf *)
 val inReleaseSequenceOf_selfOrderedBefore = prove(
     ``∀ g A B. inReleaseSequenceOf g A B ∧ (A <> B) ==> orderedBefore g B A``,
         RW_TAC(srw_ss()) [inReleaseSequenceOf_def,sequencedBefore_def]);
-val inReleaseSequenceOf_headOrderedBefore = prove(
+(*val inReleaseSequenceOf_headOrderedBefore = prove(
     ``∀ g A B C. isReadBy g B C ∧ inReleaseSequenceOf g B A ==> orderedBefore g A C``,
-        METIS_TAC [transitive_def, isReadBy_def,inReleaseSequenceOf_selfOrderedBefore,orderedBefore_transitivity]);
+        METIS_TAC [trans_def, isReadBy_def,inReleaseSequenceOf_selfOrderedBefore,orderedBefore_transitivity]);*)
 val inReleaseSequenceOf_reflexivity = prove(
     ``∀ g A. inReleaseSequenceOf g A A``,
         rw [inReleaseSequenceOf_def]);
 val inReleaseSequenceOf_transitivity = prove(
     ``∀ g A B C. inReleaseSequenceOf g A B ∧ inReleaseSequenceOf g B C ==> inReleaseSequenceOf g A C``,
-        RW_TAC arith_ss [transitive_def,inReleaseSequenceOf_def, orderedBefore_transitivity] THEN
-        METIS_TAC [transitive_def,sequencedBefore_transitivity,modifiesBefore_transitivity]);
+        RW_TAC arith_ss [trans_def,inReleaseSequenceOf_def, orderedBefore_transitivity] THEN
+        METIS_TAC [trans_def,sequencedBefore_transitivity,modifiesBefore_transitivity]);
 
 
 (* carriesDependencyTo *)
 val carriesDependencyTo_orderedBefore = prove(
-    ``∀ g A B. carriesDependencyTo g A B ==> orderedBefore g A B``,
-        RW_TAC (srw_ss()) [carriesDependencyTo_def]);
+    ``impliesOrderedBefore carriesDependencyTo``,
+        METIS_TAC [impliesOB_def, wellFormed_def]);
 
 
 (* synchronizesWith *)
-val synchronizesWith_orderedBefore = prove(
+(*val synchronizesWith_orderedBefore = prove(
     ``impliesOrderedBefore synchronizesWith``,
-        RW_TAC (srw_ss()) [impliesOrderedBefore_def,synchronizesWith_def] THEN
-        METIS_TAC [transitive_def,impliesOrderedBefore_def,sequencedBefore_orderedBefore, isReadBy_orderedBefore,orderedBefore_transitivity,inReleaseSequenceOf_headOrderedBefore]);
+        RW_TAC (srw_ss()) [impliesOB_def,synchronizesWith_def] THEN
+        METIS_TAC [trans_def,impliesOB_def,sequencedBefore_orderedBefore, isReadBy_orderedBefore,orderedBefore_transitivity,inReleaseSequenceOf_headOrderedBefore]);*)
 
 
 (* dependencyOrderedBefore *)
-val dob_orderedBefore = prove(
-        ``impliesOrderedBefore dependencyOrderedBefore``,
-        REWRITE_TAC [impliesOrderedBefore_def] >>
+(*val dob_orderedBefore = prove(
+    ``impliesOrderedBefore dependencyOrderedBefore``,
+        rw [impliesOB_def] >>
+        UNDISCH_TAC ``wellFormed g`` >>
+        UNDISCH_TAC ``dependencyOrderedBefore g A B`` >>
+        SPEC_TAC (``B:node``,``B:node``) >>
+        SPEC_TAC (``A:node``,``A:node``) >>
+        SPEC_TAC (``g:graph``,``g:graph``) >>
         Induct_on `dependencyOrderedBefore` >>
         rw [] >>
-        METIS_TAC [impliesOrderedBefore_def,transitive_def,inReleaseSequenceOf_headOrderedBefore,carriesDependencyTo_orderedBefore,orderedBefore_transitivity] );
+        METIS_TAC [wellFormed_def,impliesOB_def,trans_def,inReleaseSequenceOf_headOrderedBefore,carriesDependencyTo_orderedBefore,orderedBefore_transitivity] );*)
 
 
 (* interthreadHappensBefore *)
-val ithb_orderedBefore = prove(
+(*val ithb_orderedBefore = prove(
     ``impliesOrderedBefore interthreadHappensBefore``,
-        REWRITE_TAC [impliesOrderedBefore_def] >>
+        rw [impliesOB_def] >>
+        UNDISCH_TAC ``wellFormed g`` >>
+        UNDISCH_TAC ``interthreadHappensBefore g A B`` >>
+        SPEC_TAC (``B:node``,``B:node``) >>
+        SPEC_TAC (``A:node``,``A:node``) >>
+        SPEC_TAC (``g:graph``,``g:graph``) >>
         Induct_on `interthreadHappensBefore` >>
-        METIS_TAC [impliesOrderedBefore_def,transitive_def,
-                   orderedBefore_transitivity, sequencedBefore_def, synchronizesWith_orderedBefore, dob_orderedBefore]);
+        METIS_TAC [impliesOB_def,trans_def,
+                   orderedBefore_transitivity, sequencedBefore_def, synchronizesWith_orderedBefore, dob_orderedBefore]);*)
 (*              MATCH_MP_TAC ithb_ind*)
 
 
 (* happensBefore *)
-val happensBefore_orderedBefore = prove(
-    ``∀ g A B. happensBefore g A B ==> orderedBefore g A B``,
-    METIS_TAC [impliesOrderedBefore_def,happensBefore_def, sequencedBefore_orderedBefore, ithb_orderedBefore]);
+(*val happensBefore_orderedBefore = prove(
+    ``impliesOrderedBefore happensBefore``,
+        METIS_TAC [impliesOB_def,happensBefore_def, sequencedBefore_orderedBefore, ithb_orderedBefore]);*)
 (* happensBefore is NOT transitive, because you can't have a dob followed by a sequencedBefore (both of which imply happensBefore) *)
 (*val happensBefore_transitivity = prove(
     ``∀ g A B C. (∀X. MEM X g.nodes ==> ~isConsume X) ==> happensBefore g A B ∧ happensBefore g B C ==> happensBefore g A C``,
        rw [happensBefore_def] THENL [
-       METIS_TAC [transitive_def, sequencedBefore_transitivity]
+       METIS_TAC [trans_def, sequencedBefore_transitivity]
        METIS_TAC [ithb_rules]*)
                  
 (* visibleTo *)
-val visibleTo_orderedBefore = prove(
+(*val visibleTo_orderedBefore = prove(
     ``impliesOrderedBefore visibleTo``,
-        METIS_TAC [impliesOrderedBefore_def, visibleTo_def, happensBefore_orderedBefore]);
+        METIS_TAC [impliesOB_def, visibleTo_def, happensBefore_orderedBefore]);*)
 (* visibleTo is not transitive, since happensBefore isn't transitive *)
 
 
 (* inVisibleSequenceOf *)
-val inVisibleSequenceOf_irreflexivity = prove(
-    ``∀ g A. ~inVisibleSequenceOf g A A``,
-        RW_TAC (srw_ss()) [LET_THM, inVisibleSequenceOf_def, visibleTo_def] >>
-        `~visibleTo g A A ∧ ~happensBefore g A A` by METIS_TAC [impliesOrderedBefore_def,visibleTo_orderedBefore, happensBefore_orderedBefore, orderedBefore_irreflexivity] >>
+(*val inVisibleSequenceOf_irreflexivity = prove(
+    ``∀ g. wellFormed g ==> irreflexive (inVisibleSequenceOf g)``,
+        RW_TAC (srw_ss()) [irrefl_def, LET_THM, inVisibleSequenceOf_def, visibleTo_def] >>
+        `~visibleTo g A A ∧ ~happensBefore g A A` by METIS_TAC [wellFormed_def, irrefl_def, impliesOB_def,visibleTo_orderedBefore, happensBefore_orderedBefore, orderedBefore_irreflexivity] >>
         Cases_on `isStore A` >> Cases_on `isAtomic A` >> rw [] >>
-        `~isLoad A` by EVAL_TAC >> UNDISCH_TAC ``isStore A`` >> rw [isStore_def,isLoad_def]);
+        `~isLoad A` by EVAL_TAC >> UNDISCH_TAC ``isStore A`` >> rw [isStore_def,isLoad_def]);*)
 (* inVisibleSequenceOf DOESN'T imply orderedBefore (see example in tests/) *)
 
 
 (* sequentiallyConsistent *)
-val sequentiallyConsistent_irreflexivity = prove(
-    ``∀ g A. ~sequentiallyConsistent g A A``,
-        METIS_TAC [LET_THM, sequentiallyConsistent_def, inVisibleSequenceOf_irreflexivity, sameAddress_def, orderedBefore_irreflexivity]);
+(*val sequentiallyConsistent_irreflexivity = prove(
+    ``∀ g. wellFormed g ==> irreflexive (sequentiallyConsistent g)``,
+        METIS_TAC [wellFormed_def, irrefl_def, LET_THM, sequentiallyConsistent_def, inVisibleSequenceOf_irreflexivity, sameAddress_def, orderedBefore_irreflexivity]);*)
 (* sequentiallyConsistent doesn't imply orderedBefore (see inVisibleSequenceOf) *)
 
 
-(* canReadFrom *)
-val canReadFrom_irreflexivity = prove(
-    ``∀ g A. ~canReadFrom g A A``,
-    METIS_TAC [impliesOrderedBefore_def, canReadFrom_def, sequentiallyConsistent_irreflexivity,inVisibleSequenceOf_irreflexivity,visibleTo_orderedBefore,orderedBefore_irreflexivity]);
-(* canReadFrom doesn't imply orderedBefore (see seqConsistent) *)
+(* canBeReadBy *)
+(*val canBeReadBy_irreflexivity = prove(
+    ``∀ g. wellFormed g ==> irreflexive (canBeReadBy g)``,
+        METIS_TAC [wellFormed_def, irrefl_def,impliesOB_def, canBeReadBy_def, sequentiallyConsistent_irreflexivity,inVisibleSequenceOf_irreflexivity,visibleTo_orderedBefore,orderedBefore_irreflexivity]);*)
+(* canBeReadBy doesn't imply orderedBefore (see seqConsistent) *)
 
+open finite_mapTheory;
+(*
+val resolve_visibleTo = prove(
+    ``∀ g1 g2 msg A B. resolve g1 (msg, g2) ∧ visibleTo g1 A B ==> visibleTo g2 A B``,
+        rw [resolve_def, visibleTo_def]
+
+    
+val resolve_canBeReadBy = prove(
+    ``∀ g1 g2 msg A B. resolve g1 (msg, g2) ∧ canBeReadBy g1 A B ==> canBeReadBy g2 A B``,
+        rw [resolve_def,canBeReadBy_def] THENL [
+          (*1.*)  FULL_SIMP_TAC (srw_ss()) [inVisibleSequenceOf_def,sequentiallyConsistent_def,visibleTo_def,LET_THM,visibleTo_def,orderedBefore_def,happensBefore_def]
+        ]
+           METIS_TAC []
+           
+val resolve_wellFormed = prove(
+    ``∀ g1 g2 msg. wellFormed g1 ∧ resolve g1 (msg, g2) ==> wellFormed g2``,
+        rw [wellFormed_def] THENL [
+            metis_tac [resolve_def,orderedBefore_def,carriesDependencyTo_def],
+            FULL_SIMP_TAC (srw_ss()) [resolve_def]>>
+            Cases_on `(r,w)=(B,A)` >> rw [] >>
+            FULL_SIMP_TAC (srw_ss()) [isReadBy_def]
+            Cases_on `r=B` >> rw []
+            `(g1.rf |+ (B,w)) ' B = A ∧ w = A` by FULL_SIMP_TAC (srw_ss()) [FLOOKUP_DEF] THENL [
+                METIS_TAC [FLOOKUP_DEF,FAPPLY_FUPDATE_THM],
+                rw []
+            ]
+ *)         
 
 
 
@@ -385,15 +413,8 @@ val canReadFrom_irreflexivity = prove(
 
 (* TODO:
 
-Find example where A is orderedBefore B but B is in the visibleSequence of A
-
-(all on same address:)
-
-t1    t2
-w(3)
-      r(2)
-w(3) 
-
+1. Find example where A isReadBy B but B is orderedBefore A
+2. Find example where A is orderedBefore B but B is in the visibleSequence of A
 
  *)
 
