@@ -28,10 +28,14 @@ val _ = Datatype`
    | UFuncRefV addr
 `;
 
+(* TEMPORARY *)
+val Int32_def = Define`
+    Int32 = Int 32`;
+
 val value_add_def = Define`
 value_add v1 v2 =
      case (v1, v2) of
-         (Int n1 sz1, Int n2 sz2) => if sz1 = sz2 then SOME (Int (n1 + n2) sz1)
+         (Int sz1 n1, Int sz2 n2) => if sz1 = sz2 then SOME (Int sz1 (n1 + n2))
                                      else NONE
       |  (Int _ _, _) => NONE
       | _ => NONE
@@ -41,7 +45,7 @@ val _ = overload_on ("+", ``value_add``);
 val value_div_def = Define`
     value_div v1 v2 =
              case (v1,v2) of
-                 (Int n1 sz1, Int n2 sz2) => if (sz2=sz1 ∧ n2<>0) then SOME (Int (n1 DIV n2) sz1)
+                 (Int sz1 n1, Int sz2 n2) => if (sz2=sz1 ∧ n2<>0) then SOME (Int sz1 (n1 DIV n2))
                                              else NONE
                | _ => NONE
 `;
@@ -49,7 +53,7 @@ val _ = overload_on ("DIV", ``value_div``);
 
 val value_to_address = Define`
     value_to_address (v:value) : (addr option) = case v of
-        Int n1 sz1 => SOME n1
+        Int sz1 n1 => SOME n1
       | _ => NONE
 `;
                     

@@ -59,6 +59,7 @@ val _ = type_abbrev(
 val TSUNIT_def = Define`
   TSUNIT (x:α) :α TSM = λts. Success (x, ts, [])
 `;
+
 val _ = overload_on ("return", ``TSUNIT``)
 
 val TSBIND_def = Define`
@@ -79,7 +80,7 @@ val TSLOAD_def = Define`
       let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION (FDOM ts0.addrwr_map)) in
       let mesg = Read a reqnum m (depa UNION {reqnum}) in
       let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v)) in
-      let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ ("b",(NONE,depa UNION {reqnum}))))
+      let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ (v,(NONE,depa UNION {reqnum}))))
       in
         Success((), ts2, [mesg])
 `
@@ -155,9 +156,10 @@ val eval_exp_def = Define`
           do
             (val1, dep1) <- readVar v1 ;
             (val2, dep2) <- readVar v2 ;
-            v <- evalbop bop val1 val2;
+            v <- evalbop bop val1 val2 ;
             return (v, dep1 UNION dep2)
           od
+      | Value v => return ([v], {})
 `
 
 val TSFUPD_def = Define`
@@ -208,11 +210,55 @@ val exec_inst_def = Define`
            a <- optLift (value_to_address av) ;
            TSSTORE (v,depv) (a,depa) morder
         od
+(*    | Fence morder =>
+        do
+            (λts. Success((),ts,[Fence morder]))
+        od*)
+     (*| AtomicRMW opr destloc srcvar isiref morder => *)
 `
+
+val threadReceive_def = Define`
+    threadReceive ts ms = case ms of
+      ResolvedRead v mid => let var = ts.memreq_map ' mid in
+                            let deps = SND ((ts.curframe.ssavars) ' var) in
+                            let cf = ts.curframe with ssavars updated_by (λvars. FUPDATE vars (var, (SOME v,deps))) in
+                            let ts1 = ts with curframe updated_by (λcfs. cf) in
+                            ts1
+`;
 
 (* Test:
 
 load "uvmThreadSemanticsTheory";
+
+
+Define`get_result (r:(unit # threadState # memoryMessage list) tsstep_result) = case r of
+    | Success (α,β,δ) => β
+`
+
+
+Define`ts = <| curframe :=
+               <| ssavars := FEMPTY |+ ("a", (SOME (Int 32 8), {})) |> ;
+               memreq_map := FEMPTY ; addrwr_map := FEMPTY
+            |> `;
+
+Define `ts2 = get_result ((exec_inst (Load "x" T "a" SEQ_CST)) ts)`;
+ ``exec_inst (Assign ["x"] (Value (Int 32 2))) ts``;
+
+Define`ts1 = get_result (exec_inst (Load "b" T "a" SEQ_CST) ts)`;
+EVAL ``threadReceive ts1 (ResolvedRead (Int 32 8) 0)``;
+
+type_of(``ResolvedRead (Int 8 2)``);
+
+EVAL ``(do
+        exec_inst (Assign ["a1"] (Value (Int32 2))) ;
+        exec_inst (Assign ["a2"] (Value (Int32 8))) ;
+        exec_inst (Load   "c" T "a1" SEQ_CST)       ;
+        exec_inst (Store  "a1" T "a2" SEQ_CST)
+       od ts)``;
+
+
+
+
 
 Define`ts = <| curframe :=
                <| ssavars := FEMPTY |+ ("y", (SOME 1,{}) ) |+ ("z", (SOME 2,{}))
@@ -220,6 +266,8 @@ Define`ts = <| curframe :=
                                     |+ ("p", (NONE,{}) ) |> ;
                memreq_map := FEMPTY
             |> `;
+
+
 
 EVAL ``exec_inst (Assign ["x"] (Binop Add "z" "y")) ts``;
 EVAL ``exec_inst (Assign ["x"; "y"] (Binop Add "z" "y")) ts``;
@@ -235,12 +283,14 @@ EVAL ``exec_inst (Assign ["w"] (Binop Add "x" "y")) ts``;
 
 EVAL ``exec_inst (Store "z" T "a" SEQ_CST) ts``;
 
+Define `ts2 = get_result ((exec_inst (Load "x" T "a" SEQ_CST)) ts)`;
 EVAL ``do
         exec_inst (Load "x" T "a" SEQ_CST) ;
-        exec_inst (Load "x'" T "a" SEQ_CST) ;
+        exec_inst (Load "a" T "a" SEQ_CST) ;
         exec_inst (Store "z" T "a" SEQ_CST)
        od ts``
 
+EVAL ``ts2``;
 
 *)
 

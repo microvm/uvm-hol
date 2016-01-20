@@ -126,7 +126,7 @@ val _ = Datatype`
 val _ = Datatype`
   expression =
      Binop binop SSAVar SSAVar
-
+   | Value value
      (* memory operations *)
 
    | CMPXCHG bool (* T for iref, F for ptr *)
@@ -230,12 +230,14 @@ val _ = type_abbrev("memdeps", ``:memreqid set``)
 
 
 
-val _ = Datatype`
-  memoryMessage = Read  addr memreqid memoryorder memdeps
-                | Write addr memreqid value    memoryorder memdeps
+val memoryMessage_def = Datatype`
+  memoryMessage = Read  addr memreqid       memoryorder memdeps
+                | Write addr memreqid value memoryorder memdeps
+                | Fence                     memoryorder
 `;
 
-
+val memoryMessageResolve_def = Datatype`
+    memoryMessageResolve = ResolvedRead value memreqid`;
 
 
 
