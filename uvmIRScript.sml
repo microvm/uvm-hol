@@ -193,16 +193,14 @@ val _ = Datatype`
     | ExnInstruction expression resumption_data
 `;
 
-(* Note, when wrapping some expressions, it's possible that there will be an
-   implicit requirement on the implementation to handle errors more gracefully.
-   For example,
-     if you wrap a Div operation, you have to handle division by zero somehow
-     if you don't wrap it, you can let demons fly out of your nose.
-   More complicatedly,
-     if you wrap a swapstack, you might expect/rely on the implemention to give an
-     exception if the stack is active ("bound to a thread" / "running" / .. ?)
-     TBD - preliminary discussion suggests this WON'T be done, as clients can
-     arrange concurrency protection for this sort of thing themselves
+(* Wrapping expressions with ExnInstruction forces the implementation
+   to gracefully handle what would have otherwise been undefined
+   behaviour. For example, an unwrapped division lets demons fly out
+   of your nose if the second argument is 0. On the other hand, if the
+   client wraps a division with resumption_data, the implementation
+   must check for the zero argument and/or set up the appropriate
+   signal handling so that the exceptional branch can get called when
+   the second argument is indeed 0.
 *)
 
 val _ = Datatype`
