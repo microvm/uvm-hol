@@ -98,7 +98,7 @@ val _ = Datatype`
 val _ = type_abbrev("destination", ``:block_label # (destarg list)``)
 
 val _ = Datatype`
-  termination_data = <|
+  resumption_data = <|
     normaldest : destination ;
     exceptionaldest : destination
   |>
@@ -181,12 +181,12 @@ val _ = Datatype`
     | TailCall calldata
     | Branch1 destination
     | Branch2 SSAVar destination destination
-    | Watchpoint ((wpid # destination) option) termination_data
+    | Watchpoint ((wpid # destination) option) resumption_data
     | WPBranch wpid destination destination
-    | Call calldata destination destination
-    | Swapstack SSAVar (* stackID *) (SSAVar list) destination destination
+    | Call calldata resumption_data
+    | Swapstack SSAVar (* stackID *) (SSAVar list) resumption_data
     | Switch SSAVar destination (value |-> destination)
-    | ExnInstruction expression termination_data
+    | ExnInstruction expression resumption_data
 `;
 
 (* Note, when wrapping some expressions, it's possible that there will be an
