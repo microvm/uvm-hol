@@ -184,7 +184,11 @@ val _ = Datatype`
     | Watchpoint ((wpid # destination) option) resumption_data
     | WPBranch wpid destination destination
     | Call calldata resumption_data
-    | Swapstack SSAVar (* stackID *) (SSAVar list) resumption_data
+    | Swapstack
+        SSAVar (* stackID *)
+        bool (* T if exception values are being transferred *)
+        (SSAVar list) (* parameters *)
+        resumption_data
     | Switch SSAVar destination (value |-> destination)
     | ExnInstruction expression resumption_data
 `;
