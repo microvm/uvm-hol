@@ -1,8 +1,0 @@
-all:
-	Holmake --no_holmakefile
-
-clean:
-	Holmake --no_holmakefile clean && cd tests && Holmake clean
-
-tests: uvmSystemTheory.uo
-	cd tests && Holmake clean && Holmake --holmakefile Holmakefile
