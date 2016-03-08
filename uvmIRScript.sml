@@ -9,8 +9,6 @@ val _ = type_abbrev ("SSAVar", ``:string``)
 
 val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
-(*val _ = type_abbrev ("valu", ``:num``) (* FIXME *)*)
-
 
 val _ = type_abbrev ("trapData", ``:num``)
 
@@ -85,14 +83,15 @@ val _ = type_abbrev("label", ``:string``)
 
 val _ = Datatype`
   destarg =
-    Normal SSAVar    (* i.e., something already in scope *)
-  | FreshBound num   (* index to resumed value list - may not be any if, for
-                        example, the statement is Return or Tailcall, but if the
-                        statement is a call, the concrete syntax might be something
-                        like
+    DA_Normal SSAVar    (* i.e., something already in scope *)
+  | DA_FreshBound num   (* index to resumed value list - may not be any if, for
+                           example, the statement is Return or Tailcall, but
+                           if the statement is a call, the concrete syntax might
+                           be something like
 
-                           CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
-                     *)
+                              CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
+                        *)
+  | DA_Value value
 `;
 
 val _ = type_abbrev("destination", ``:block_label # (destarg list)``)
@@ -123,6 +122,8 @@ val _ = Datatype`
     XCHG | ADD | SUB | AND | NAND | OR | XOR | MAX | MIN | UMAX | UMIN
 `
 
+val _ = Datatype`operand = SSAV_OP SSAVar | CONST_OP value`
+
 val _ = Datatype`
   expression =
      Binop binop SSAVar SSAVar
@@ -134,13 +135,13 @@ val _ = Datatype`
              memoryorder (* success order *)
              memoryorder (* failure order *)
              SSAVar (* memory location *)
-             SSAVar (* expected value *)
-             SSAVar (* desired value *)
+             operand (* expected value *)
+             operand (* desired value *)
    | ATOMICRMW bool (* T for iref, F for ptr *)
                memoryorder
                AtomicRMW_Op
                SSAVar (* memory location *)
-               SSAVar (* operand for op *)
+               operand (* operand for op *)
    | FENCE memoryorder
 
      (* allocation operations *)
