@@ -126,10 +126,22 @@ val _ = Datatype`operand = SSAV_OP SSAVar | CONST_OP value`
 
 val _ = Datatype`
   expression =
-     Binop binop SSAVar SSAVar
+     Binop binop operand operand
+       (* performs arithmetic, yielding a value *)
    | Value value
-     (* memory operations *)
-
+       (* yields the value *)
+   | ExprCall calldata
+              bool (* T to abort, F to rethrow *)
+       (* yields a tuple of results from the call *)
+   | Load bool (* T for iref, F for ptr *)
+          SSAVar (* memory location *)
+          memoryorder
+       (* yields the memory value *)
+   | Store SSAVar (* value to be written *)
+           bool (* T for iref, F for ptr *)
+           SSAVar (* memory location *)
+           memoryorder
+       (* yields nothing *)
    | CMPXCHG bool (* T for iref, F for ptr *)
              bool (* T for strong, F for weak *)
              memoryorder (* success order *)
@@ -137,39 +149,57 @@ val _ = Datatype`
              SSAVar (* memory location *)
              operand (* expected value *)
              operand (* desired value *)
-   | ATOMICRMW bool (* T for iref, F for ptr *)
-               memoryorder
-               AtomicRMW_Op
-               SSAVar (* memory location *)
-               operand (* operand for op *)
-   | FENCE memoryorder
+       (* yields pair (oldvalue, boolean (T = success, F = failure)) *)
+  | ATOMICRMW bool (* T for iref, F for ptr *)
+              memoryorder
+              AtomicRMW_Op
+              SSAVar (* memory location *)
+              operand (* operand for op *)
+       (* yields old memory value *)
+  | New uvmType (* must not be hybrid *)
+       (* yields a reference of type uvmType *)
+  | AllocA uvmType (* must not be hybrid *)
+       (* yields an iref to the type uvmType *)
+  | NewHybrid uvmType  (* must be a hybrid type *)
+              SSAVar (* length of varying part (can be zero);
+                        will cause u.b., or raise exn if
+                        get-variable-part-iref call is made on return value *)
+       (* yields ref *)
+  | AllocAHybrid uvmType SSAVar
+       (* as above, but returns iref *)
+  | NewStack SSAVar (* function reference *)
+       (* yields stack reference *)
+  | NewThread SSAVar (* stack id *)
+              (SSAVar list) (* args for resumption point *)
+       (* yields thread reference *)
+  | NewThreadExn SSAVar (* stack id *)
+                 SSAVar (* exception value *)
+       (* yields thread reference (thread resumes with exceptional value) *)
 
-     (* allocation operations *)
-   | New uvmType
-   | AllocA uvmType
-   | NewHybrid uvmType SSAVar (* num can be zero; will cause u.b., or raise exn if
-                              get variable part iref call is made on return value *)
-   | AllocAHybrid uvmType SSAVar
-   | NewStack SSAVar (* variable contains method *)
-   | NewThread SSAVar (* stack id *) (SSAVar list) (* args for resumption point *)
-   | NewThreadExn SSAVar (* stack id *) SSAVar (* exception value *)
-
-
-   | PushFrame signame (* stackID *) SSAVar (* method *) SSAVar
-   | PopFrame SSAVar (* stackID *)
-`
+  | NewFrameCursor SSAVar (* stack id *)
+       (* yields frame cursor *)
+  | (* stack manipulation API to be expanded *)
+  | GetIref SSAVar (* ref *)
+       (* yields corresponding iref *)
+  | GetFieldIref SSAVar (* iref / ptr *)
+                 value  (* field index *)
+       (* yields iref/ptr *)
+  | GetElementIref SSAVar (* iref / ptr to array type *)
+                   SSAVar (* array index *)
+       (* yields iref/ptr *)
+  | ShiftIref SSAVar (* iref/ptr to anything (not void) *)
+              SSAVar (* offset *)
+       (* yields iref/ptr *)
+  | GetVarPartIref SSAVar (* iref/ptr to hybrid *)
+       (* yeilds iref/ptr to first element of var-part of hybrid IF IT EXISTS *)
+`;
 
 val _ = Datatype`
   instruction =
     Assign (SSAVar list) expression
-  | Load SSAVar  (* destination register *)
-         bool (* T for iref, F for ptr *)
-         SSAVar (* memory location *)
-         memoryorder
-  | Store SSAVar (* value to be written *)
-          bool (* T for iref, F for ptr *)
-          SSAVar (* memory location *)
-          memoryorder
+
+  | FENCE memoryorder
+
 `
 
 val _ = type_abbrev("wpid", ``:num``)
@@ -182,7 +212,12 @@ val _ = Datatype`
     | TailCall calldata
     | Branch1 destination
     | Branch2 SSAVar destination destination
-    | Watchpoint ((wpid # destination) option) resumption_data
+    | Watchpoint
+        ((wpid # destination) option)
+           (* NONE = unconditional trap *)
+           (* SOME(wpid, dest) = conditional on wpid, trap if set;
+                                 if not, branch to dest *)
+        resumption_data
     | WPBranch wpid destination destination
     | Call calldata resumption_data
     | Swapstack
@@ -191,7 +226,7 @@ val _ = Datatype`
         (SSAVar list) (* parameters *)
         resumption_data
     | Switch SSAVar destination (value |-> destination)
-    | ExnInstruction expression resumption_data
+    | ExnInstruction instruction resumption_data
 `;
 
 (* Wrapping expressions with ExnInstruction forces the implementation
