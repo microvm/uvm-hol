@@ -137,6 +137,13 @@ val readVar_def = Define`
     od
 `
 
+val getValueOf_def = Define`
+  getValueOf (x : operand) : (value # memdeps) TSM =
+    case x of
+        SSAV_OP ssa => readVar ssa
+      | CONST_OP v => return (v, {})
+`
+
 val optLift_def = Define`
 optLift NONE = TSDIE
                /\
@@ -154,8 +161,8 @@ val eval_exp_def = Define`
       case e of
       | Binop bop v1 v2 =>
           do
-            (val1, dep1) <- readVar v1 ;
-            (val2, dep2) <- readVar v2 ;
+            (val1, dep1) <- getValueOf v1 ;
+            (val2, dep2) <- getValueOf v2 ;
             v <- evalbop bop val1 val2 ;
             return (v, dep1 UNION dep2)
           od

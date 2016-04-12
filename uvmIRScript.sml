@@ -178,7 +178,7 @@ val _ = Datatype`
 
   | NewFrameCursor SSAVar (* stack id *)
        (* yields frame cursor *)
-  | (* stack manipulation API to be expanded *)
+    (* stack manipulation API to be expanded *)
   | GetIref SSAVar (* ref *)
        (* yields corresponding iref *)
   | GetFieldIref SSAVar (* iref / ptr *)
