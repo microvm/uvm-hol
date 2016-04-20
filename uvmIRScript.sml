@@ -126,36 +126,13 @@ val _ = Datatype`operand = SSAV_OP SSAVar | CONST_OP value`
 
 val _ = Datatype`
   expression =
-     Binop binop operand operand
+    Binop binop operand operand
        (* performs arithmetic, yielding a value *)
-   | Value value
+  | Value value
        (* yields the value *)
-   | ExprCall calldata
-              bool (* T to abort, F to rethrow *)
+  | ExprCall calldata
+             bool (* T to abort, F to rethrow *)
        (* yields a tuple of results from the call *)
-   | Load bool (* T for iref, F for ptr *)
-          SSAVar (* memory location *)
-          memoryorder
-       (* yields the memory value *)
-   | Store SSAVar (* value to be written *)
-           bool (* T for iref, F for ptr *)
-           SSAVar (* memory location *)
-           memoryorder
-       (* yields nothing *)
-   | CMPXCHG bool (* T for iref, F for ptr *)
-             bool (* T for strong, F for weak *)
-             memoryorder (* success order *)
-             memoryorder (* failure order *)
-             SSAVar (* memory location *)
-             operand (* expected value *)
-             operand (* desired value *)
-       (* yields pair (oldvalue, boolean (T = success, F = failure)) *)
-  | ATOMICRMW bool (* T for iref, F for ptr *)
-              memoryorder
-              AtomicRMW_Op
-              SSAVar (* memory location *)
-              operand (* operand for op *)
-       (* yields old memory value *)
   | New uvmType (* must not be hybrid *)
        (* yields a reference of type uvmType *)
   | AllocA uvmType (* must not be hybrid *)
@@ -197,9 +174,29 @@ val _ = Datatype`
 val _ = Datatype`
   instruction =
     Assign (SSAVar list) expression
-
-  | FENCE memoryorder
-
+  | Load SSAVar (* destination variable  *)
+         bool (* T for iref, F for ptr *)
+         SSAVar (* source memory address *)
+         memoryorder
+  | Store SSAVar (* value to be written *)
+          bool (* T for iref, F for ptr *)
+          SSAVar (* destination memory address *)
+          memoryorder
+  | CmpXchg SSAVar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
+            bool (* T for iref, F for ptr *)
+            bool (* T for strong, F for weak *)
+            memoryorder (* success order *)
+            memoryorder (* failure order *)
+            SSAVar (* memory location *)
+            operand (* expected value *)
+            operand (* desired value *)
+  | AtomicRMW SSAVar (* output: old memory value *)
+              bool (* T for iref, F for ptr *)
+              memoryorder
+              AtomicRMW_Op
+              SSAVar (* memory location *)
+              operand (* operand for op *)
+  | Fence memoryorder
 `
 
 val _ = type_abbrev("wpid", ``:num``)
@@ -271,7 +268,7 @@ val _ = type_abbrev("memdeps", ``:memreqid set``)
 val memoryMessage_def = Datatype`
   memoryMessage = Read  addr memreqid       memoryorder memdeps
                 | Write addr memreqid value memoryorder memdeps
-                | Fence                     memoryorder
+                | MMFence                   memoryorder
 `;
 
 val memoryMessageResolve_def = Datatype`
