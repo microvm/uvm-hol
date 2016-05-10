@@ -6,54 +6,58 @@ local open stringTheory finite_mapTheory in end
 open lcsymtacs
 val _ = ParseExtras.tight_equality()
 
-val _ = type_abbrev ("structID", ``:string``)
+val _ = type_abbrev ("struct_id", ``:string``)
 
 val _ = Datatype`
-  machine = <| ptrsize : num ; floatsize : num ; doublesize : num  |>
+  machine = <|
+    ptrsize : num;
+    floatsize : num;
+    doublesize : num
+  |>
 `;
 
 val _ = Datatype`
-  uvmType =
-     Int num
+  uvm_type =
+   | Int num
    | Float
    | Double
-   | Ref uvmType
-   | Iref uvmType
-   | Weakref uvmType
-   | UPtr uvmType
-   | Struct structID
-   | Array uvmType num
-(* | Hybrid (uvmType list) uvmType *) (* TODO: match this change in code below *)
-   | Hybrid uvmType uvmType
+   | Ref uvm_type
+   | Iref uvm_type
+   | Weakref uvm_type
+   | UPtr uvm_type
+   | Struct struct_id
+   | Array uvm_type num
+(* | Hybrid (uvm_type list) uvm_type *) (* TODO: match this change in code below *)
+   | Hybrid uvm_type uvm_type
    | Void
    | ThreadRef
    | StackRef
    | Tagref64
-   | Vector uvmType num
-   | FuncRef uvmType (uvmType list)
-   | UFuncPtr uvmType (uvmType list)
+   | Vector uvm_type num
+   | FuncRef uvm_type (uvm_type list)
+   | UFuncPtr uvm_type (uvm_type list)
 `
 
-val fpType_def = Define`
-  fpType Float = T ∧
-  fpType Double = T ∧
-  fpType _ = F
+val fp_type_def = Define`
+  fp_type Float = T ∧
+  fp_type Double = T ∧
+  fp_type _ = F
 `;
 
-val intType_def = Define`
-  intType (Int _) = T ∧
-  intType _ = F
+val int_type_def = Define`
+  int_type (Int _) = T ∧
+  int_type _ = F
 `;
 
-val ptrType_def = Define`
-  ptrType (UPtr _) = T ∧
-  ptrType (UFuncPtr _ _) = T ∧
-  ptrType _ = F
+val ptr_type_def = Define`
+  ptr_type (UPtr _) = T ∧
+  ptr_type (UFuncPtr _ _) = T ∧
+  ptr_type _ = F
 `;
 
-val irefType_def = Define`
-  irefType (Iref _) = T ∧
-  irefType _ = F
+val iref_type_def = Define`
+  iref_type (Iref _) = T ∧
+  iref_type _ = F
 `;
 
 val eqcomparable_def = Define`
@@ -69,8 +73,8 @@ val eqcomparable_def = Define`
 `;
 
 
-val scalarType_def = Define`
-  scalarType ty =
+val scalar_type_def = Define`
+  scalar_type ty =
     case ty of
     | Int _ => T
     | Float => T
@@ -88,14 +92,14 @@ val scalarType_def = Define`
 `;
 
 (*
-   maybeVector : (uvmType -> bool) -> uvmType -> bool
+   maybe_vector : (uvm_type -> bool) -> uvm_type -> bool
 
-   [maybeVector P ty] checks to see if P is true of ty.  Alternatively,
+   [maybe_vector P ty] checks to see if P is true of ty.  Alternatively,
    if ty is a vector type, it checks to see if P is true of the element
    type of the vector
 *)
-val maybeVector_def = Define`
-  maybeVector P ty ⇔
+val maybe_vector_def = Define`
+  maybe_vector P ty ⇔
     P ty ∨ case ty of Vector ty0 _ => P ty0 | _ => F
 `;
 
@@ -194,7 +198,7 @@ val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
      wftype smap vset (Array ty sz)) ∧
 
   (∀vset sz ty.
-     0 < sz ∧ wftype smap vset ty ∧ scalarType ty
+     0 < sz ∧ wftype smap vset ty ∧ scalar_type ty
     ⇒
      wftype smap vset (Vector ty sz)) ∧
 
@@ -235,118 +239,75 @@ val native_safe_nottraced = store_thm(
 
 val _ = Datatype`
   convtype =
-  	TRUNC | ZEXT	| SEXT
-      | FPTRUNC | FPEXT | FPTOUI | FPTOSI | UITOFP | SITOFP
-      | BITCAST | REFCAST | PTRCAST
+  | TRUNC
+  | ZEXT
+  | SEXT
+  | FPTRUNC
+  | FPEXT
+  | FPTOUI
+  | FPTOSI
+  | UITOFP
+  | SITOFP
+  | BITCAST
+  | REFCAST
+  | PTRCAST
 `
 
-(* canconvert M convtype (src : uvmType) (tgt : uvmType) *)
+(* canconvert M convtype (src : uvm_type) (tgt : uvm_type) *)
 
 val (canconvert_rules, canconvert_ind, canconvert_cases) = Hol_reln`
-  (∀m n.
-     m ≤ n
-    ⇒
-     canconvert M Smap TRUNC (Int n) (Int m))
-
-    ∧
 
   (∀m n.
-    m ≤ n
-   ⇒
-    canconvert M Smap ZEXT (Int m) (Int n))
-
-    ∧
+     m ≤ n ⇒ canconvert M Smap TRUNC (Int n) (Int m)) ∧
 
   (∀m n.
-    m ≤ n
-   ⇒
-    canconvert M Smap SEXT (Int m) (Int n))
+    m ≤ n ⇒ canconvert M Smap ZEXT (Int m) (Int n)) ∧
 
-    ∧
+  (∀m n.
+    m ≤ n ⇒ canconvert M Smap SEXT (Int m) (Int n)) ∧
 
-  canconvert M Smap FPTRUNC Double Float
+  canconvert M Smap FPTRUNC Double Float ∧
 
-    ∧
-
-  canconvert M Smap FPEXT Float Double
-
-    ∧
+  canconvert M Smap FPEXT Float Double ∧
 
   (∀ty n.
-     fpType ty
-    ⇒
-     canconvert M Smap FPTOUI ty (Int n))
-
-    ∧
+     fpType ty ⇒ canconvert M Smap FPTOUI ty (Int n)) ∧
 
   (∀ty n.
-     fpType ty
-    ⇒
-     canconvert M Smap FPTOSI ty (Int n))
-
-    ∧
+     fpType ty ⇒ canconvert M Smap FPTOSI ty (Int n)) ∧
 
   (∀ty n.
-     fpType ty
-    ⇒
-     canconvert M Smap UITOFP (Int n) ty)
-
-    ∧
+     fpType ty ⇒ canconvert M Smap UITOFP (Int n) ty) ∧
 
   (∀ty n.
-     fpType ty
-    ⇒
-     canconvert M Smap SITOFP (Int n) ty)
+     fpType ty ⇒ canconvert M Smap SITOFP (Int n) ty) ∧
 
-    ∧
+  canconvert M Smap BITCAST (Int M.floatsize) Float ∧
 
-     canconvert M Smap BITCAST (Int M.floatsize) Float
+  canconvert M Smap BITCAST Float (Int M.floatsize) ∧
 
-    ∧
+  canconvert M Smap BITCAST (Int M.doublesize) Double ∧
 
-     canconvert M Smap BITCAST Float (Int M.floatsize)
-
-    ∧
-
-     canconvert M Smap BITCAST (Int M.doublesize) Double
-
-    ∧
-
-     canconvert M Smap BITCAST Double (Int M.doublesize)
-
-
-    ∧
+  canconvert M Smap BITCAST Double (Int M.doublesize) ∧
 
   (* ptrcast cases *)
   (∀n ty.
-     M.ptrsize = n
-    ⇒
-     canconvert M Smap BITCAST (Int n) (UPtr ty))
-
-    ∧
+     M.ptrsize = n ⇒ canconvert M Smap BITCAST (Int n) (UPtr ty)) ∧
 
   (∀n ty.
      M.ptrsize = n (* tell KW *)
     ⇒
-     canconvert M Smap BITCAST (UPtr ty) (Int n))
-
-    ∧
+     canconvert M Smap BITCAST (UPtr ty) (Int n)) ∧
 
   (* refcast cases *)
   (∀ty.
-     canconvert M Smap BITCAST (Ref Void) (Ref ty))
-
-    ∧
+     canconvert M Smap BITCAST (Ref Void) (Ref ty)) ∧
 
   (∀ty.
-     canconvert M Smap BITCAST (Ref ty) (Ref Void))
-
-    ∧
+     canconvert M Smap BITCAST (Ref ty) (Ref Void)) ∧
 
   (∀ty.
-     canconvert M Smap BITCAST (Ref Void) (Ref ty))
-
-    ∧
+     canconvert M Smap BITCAST (Ref Void) (Ref ty)) ∧
 
   (∀tag1 tag2.
      tag1 ∈ FDOM Smap ∧ tag2 ∈ FDOM Smap ∧
@@ -355,5 +316,5 @@ val (canconvert_rules, canconvert_ind, canconvert_cases) = Hol_reln`
      canconvert M Smap BITCAST (Ref (Struct tag1)) (Ref (Struct tag2)))
 `
 
-
 val _ = export_theory();
+

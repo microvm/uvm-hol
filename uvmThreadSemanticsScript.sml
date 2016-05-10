@@ -10,13 +10,14 @@ val _ = new_theory "uvmThreadSemantics";
 val _ = Datatype`
   frame = <|
     function : fnname ;
-    ssavars : SSAVar |-> value option # memdeps;
+    ssavars : ssavar |-> value option # memdeps;
     code : block_label |-> bblock
   |>`
 
 val _ = Datatype`
-  respt_arg = RPVal value    (* values already computed in resumee's context *)
-            | ResumerArg num (* index into values from resumer *)
+  respt_arg =
+  | RPVal value    (* values already computed in resumee's context *)
+  | ResumerArg num (* index into values from resumer *)
 `
 
 val _ = type_abbrev(
@@ -28,15 +29,15 @@ val _ = type_abbrev(
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
 val _ = Datatype`
-  threadState = <|
+  thread_state = <|
     stack : sus_frame list ;
     curframe : frame ;
     curblock : block_label ;
     offset : num ;
     tid : tid ;
-    memreq_map : num |-> SSAVar ;
+    memreq_map : num |-> ssavar ;
     addrwr_map : num |-> addr
-|>`
+  |>`
 
 val _ = Datatype`
   tsstep_result = Success α | Abort | Blocked
@@ -54,7 +55,7 @@ val paircase_eq = prove(
 (* set up TSM, a monad *)
 val _ = type_abbrev(
   "TSM",
-  ``:threadState -> (α # threadState # memoryMessage list) tsstep_result``)
+  ``:thread_state -> (α # thread_state # memory_message list) tsstep_result``)
 
 val TSUNIT_def = Define`
   TSUNIT (x:α) :α TSM = λts. Success (x, ts, [])
@@ -75,7 +76,7 @@ val TSBIND_def = Define`
 `;
 
 val TSLOAD_def = Define`
-  TSLOAD (v : SSAVar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
+  TSLOAD (v : ssavar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
     λts0.
       let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION (FDOM ts0.addrwr_map)) in
       let mesg = Read a reqnum m (depa UNION {reqnum}) in
@@ -123,54 +124,53 @@ val TSBIND_UNITR = store_thm(
   qcase_tac `tsm ts = Success a` >> PairCases_on `a` >> simp[]);
 
 val TSGET_def = Define`
-  TSGET : threadState TSM = λts. Success(ts, ts, [])
+  TSGET : thread_state TSM = λts. Success(ts, ts, [])
 `
 
-val readVar_def = Define`
-  readVar (x : SSAVar) : (value # memdeps) TSM =
+val read_var_def = Define`
+  read_var (x : ssavar) : (value # memdeps) TSM =
     do
-      ts <- TSGET ;
+      ts <- TSGET;
       case FLOOKUP ts.curframe.ssavars x of
-          NONE => TSDIE
-        | SOME (NONE,_) => TSBLOCKED
-        | SOME ((SOME v,deps)) => return (v,deps)
+      | NONE => TSDIE
+      | SOME (NONE,_) => TSBLOCKED
+      | SOME ((SOME v,deps)) => return (v,deps)
     od
 `
 
-val getValueOf_def = Define`
-  getValueOf (x : operand) : (value # memdeps) TSM =
+val get_value_of_def = Define`
+  get_value_of (x : operand) : (value # memdeps) TSM =
     case x of
-        SSAV_OP ssa => readVar ssa
-      | CONST_OP v => return (v, {})
+    | SSAV_OP ssa => read_var ssa
+    | CONST_OP v => return (v, {})
 `
 
-val optLift_def = Define`
-optLift NONE = TSDIE
-               /\
-optLift (SOME x) = return x`;
+val opt_lift_def = Define`
+opt_lift NONE = TSDIE /\
+opt_lift (SOME x) = return x`;
 
 val evalbop_def = Define`
   evalbop bop v1 v2 : (value list) TSM =
-   case bop of
-       Add => (do v <- optLift (value_add v1 v2) ; return [v] od)
-     | Sdiv => (do v <- optLift (value_div v1 v2) ; return [v] od)
+    case bop of
+    | Add => (do v <- opt_lift (value_add v1 v2) ; return [v] od)
+    | Sdiv => (do v <- opt_lift (value_div v1 v2) ; return [v] od)
 `;
 
 val eval_exp_def = Define`
   eval_exp (e : expression) : ((value list) # memdeps) TSM =
-      case e of
-      | Binop bop v1 v2 =>
-          do
-            (val1, dep1) <- getValueOf v1 ;
-            (val2, dep2) <- getValueOf v2 ;
-            v <- evalbop bop val1 val2 ;
-            return (v, dep1 UNION dep2)
-          od
-      | Value v => return ([v], {})
+    case e of
+    | Binop bop v1 v2 =>
+        do
+          (val1, dep1) <- get_value_of v1 ;
+          (val2, dep2) <- get_value_of v2 ;
+          v <- evalbop bop val1 val2 ;
+          return (v, dep1 UNION dep2)
+        od
+    | Value v => return ([v], {})
 `
 
 val TSFUPD_def = Define`
-  TSFUPD (f:threadState -> threadState) : unit TSM = λts. Success((), f ts, [])
+  TSFUPD (f:thread_state -> thread_state) : unit TSM = λts. Success((), f ts, [])
 `;
 
 val _ = overload_on("TSSET", ``λts. TSFUPD (K ts)``)
@@ -199,22 +199,22 @@ val valbind_def = Define`
 val exec_inst_def = Define`
   exec_inst inst : unit TSM =
     case inst of
-      Assign vtuple exp =>
+    | Assign vtuple exp =>
         do
            values <- eval_exp exp ;
            valbind vtuple values
         od
     | Load destvar isiref srcvar morder =>
         do
-           (av, depa) <- readVar srcvar ;
-           a <- optLift (value_to_address av) ;
+           (av, depa) <- read_var srcvar ;
+           a <- opt_lift (value_to_address av) ;
            TSLOAD destvar (a,depa) morder
         od
     | Store srcvar isiref destvar morder =>
         do
-           (v,depv) <- readVar srcvar ;
-           (av,depa) <- readVar destvar ;
-           a <- optLift (value_to_address av) ;
+           (v,depv) <- read_var srcvar ;
+           (av,depa) <- read_var destvar ;
+           a <- opt_lift (value_to_address av) ;
            TSSTORE (v,depv) (a,depa) morder
         od
 (*    | Fence morder =>
@@ -224,13 +224,15 @@ val exec_inst_def = Define`
      (*| AtomicRMW opr destloc srcvar isiref morder => *)
 `
 
-val threadReceive_def = Define`
-    threadReceive ts ms = case ms of
-      ResolvedRead v mid => let var = ts.memreq_map ' mid in
-                            let deps = SND ((ts.curframe.ssavars) ' var) in
-                            let cf = ts.curframe with ssavars updated_by (λvars. FUPDATE vars (var, (SOME v,deps))) in
-                            let ts1 = ts with curframe updated_by (λcfs. cf) in
-                            ts1
+val thread_receive_def = Define`
+  thread_receive ts ms =
+    case ms of
+    | ResolvedRead v mid =>
+        let var = ts.memreq_map ' mid in
+        let deps = SND ((ts.curframe.ssavars) ' var) in
+        let cf = ts.curframe with ssavars updated_by (λvars. FUPDATE vars (var, (SOME v,deps))) in
+        let ts1 = ts with curframe updated_by (λcfs. cf) in
+        ts1
 `;
 
 (* Test:
@@ -238,7 +240,7 @@ val threadReceive_def = Define`
 load "uvmThreadSemanticsTheory";
 
 
-Define`get_result (r:(unit # threadState # memoryMessage list) tsstep_result) = case r of
+Define`get_result (r:(unit # thread_state # memory_message list) tsstep_result) = case r of
     | Success (α,β,δ) => β
 `
 
@@ -252,7 +254,7 @@ Define `ts2 = get_result ((exec_inst (Load "x" T "a" SEQ_CST)) ts)`;
  ``exec_inst (Assign ["x"] (Value (Int 32 2))) ts``;
 
 Define`ts1 = get_result (exec_inst (Load "b" T "a" SEQ_CST) ts)`;
-EVAL ``threadReceive ts1 (ResolvedRead (Int 32 8) 0)``;
+EVAL ``thread_receive ts1 (ResolvedRead (Int 32 8) 0)``;
 
 type_of(``ResolvedRead (Int 8 2)``);
 
@@ -304,7 +306,7 @@ EVAL ``ts2``;
 
 (*
 val ts_step_def = Define`
-  ts_step codemap (ts0 : threadState) : tsstep_result =
+  ts_step codemap (ts0 : thread_state) : tsstep_result =
     case FLOOKUP ts0.curframe.code ts0.curblock of
       NONE => Abort
     | SOME bb =>
@@ -316,3 +318,4 @@ val ts_step_def = Define`
 *)
 
 val _ = export_theory();
+

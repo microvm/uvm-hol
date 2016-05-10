@@ -5,16 +5,16 @@ open uvmValuesTheory;
 
 val _ = new_theory "uvmIR";
 
-val _ = type_abbrev ("SSAVar", ``:string``)
+val _ = type_abbrev ("ssavar", ``:string``)
 
 val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
 
-val _ = type_abbrev ("trapData", ``:num``)
+val _ = type_abbrev ("trap_data", ``:num``)
 
 val _ = Datatype`
   memoryorder =
-   NOT_ATOMIC | RELAXED | CONSUME | ACQUIRE | RELEASE | ACQ_REL | SEQ_CST
+    NOT_ATOMIC | RELAXED | CONSUME | ACQUIRE | RELEASE | ACQ_REL | SEQ_CST
 `;
 
 val _ = Datatype`
@@ -23,14 +23,13 @@ val _ = Datatype`
 `;
 
 val (binoptype_rules, binoptype_ind, binoptype_cases) = Hol_reln`
-  (∀n opn. opn ∈ {Add; Sub; Mul; Sdiv; Srem; Udiv; Urem; And; Or; Xor}
-           ⇒
+  (∀n opn. opn ∈ {Add; Sub; Mul; Sdiv; Srem; Udiv; Urem; And; Or; Xor} ⇒
            binoptype opn (Int n) (Int n) (Int n)) ∧
 
   (∀n m opn. opn ∈ {Shl; LShr; AShr} ⇒
              binoptype opn (Int n) (Int m) (Int n)) ∧
 
-  (∀ty opn. fpType ty ∧ opn ∈ {FAdd; FSub; FMul; FDiv; FRem} ⇒
+  (∀ty opn. fp_type ty ∧ opn ∈ {FAdd; FSub; FMul; FDiv; FRem} ⇒
             binoptype opn ty ty ty)
 `;
 
@@ -48,26 +47,24 @@ val cmpresult_def = Define`
 
 val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
   (∀iop ity.
-    maybeVector eqcomparable ity ∧ iop ∈ {EQ ; NE }
-   ⇒
-    cmpOptype iop ity ity (cmpresult ity)) ∧
+      maybeVector eqcomparable ity ∧ iop ∈ {EQ ; NE}
+    ⇒
+      cmpOptype iop ity ity (cmpresult ity)) ∧
 
   (∀iop ity.
-      maybeVector (intType ∪ ptrType ∪ irefType) ity ∧
+      maybeVector (int_type ∪ ptr_type ∪ iref_type) ity ∧
       iop ∈ { UGE ; UGT ; ULE ; ULT}
     ⇒
       cmpOptype iop ity ity (cmpresult ity)) ∧
 
   (∀iop ity.
-       maybeVector intType ity ∧
+       maybeVector int_type ity ∧
        iop ∈ {SGE ; SGT ; SLE ; SLT}
     ⇒
-       cmpOptype iop ity ity (cmpresult ity))
-
-    ∧
+       cmpOptype iop ity ity (cmpresult ity)) ∧
 
   (∀fop fty.
-      (fpType fty ∨ (∃sz fty0. fpType fty0 ∧ fty = Vector fty0 sz)) ∧
+      (fp_type fty ∨ (∃sz fty0. fp_type fty0 ∧ fty = Vector fty0 sz)) ∧
       fop ∈ { FFALSE ; FTRUE ; FOEQ ; FOGT ; FOGE ; FOLT ; FOLE ; FONE ;
               FORD ; FUEQ ; FUGT ; FUGE ; FULT ; FULE ; FUNE ; FUNO }
     ⇒
@@ -83,7 +80,7 @@ val _ = type_abbrev("label", ``:string``)
 
 val _ = Datatype`
   destarg =
-    DA_Normal SSAVar    (* i.e., something already in scope *)
+  | DA_Normal ssavar    (* i.e., something already in scope *)
   | DA_FreshBound num   (* index to resumed value list - may not be any if, for
                            example, the statement is Return or Tailcall, but
                            if the statement is a call, the concrete syntax might
@@ -111,90 +108,90 @@ val _ = Datatype`
 
 val _ = Datatype`
   calldata = <|
-    methodname : SSAVar ;  (* allowing for indirect calls *)
-    args : SSAVar list ;
+    methodname : ssavar ;  (* allowing for indirect calls *)
+    args : ssavar list ;
     convention : callconvention
   |>
 `
 
 val _ = Datatype`
-  AtomicRMW_Op =
+  atomicrmw_op =
     XCHG | ADD | SUB | AND | NAND | OR | XOR | MAX | MIN | UMAX | UMIN
 `
 
-val _ = Datatype`operand = SSAV_OP SSAVar | CONST_OP value`
+val _ = Datatype`operand = SSAV_OP ssavar | CONST_OP value`
 
 val _ = Datatype`
   expression =
-    Binop binop operand operand
+  | Binop binop operand operand
        (* performs arithmetic, yielding a value *)
   | Value value
        (* yields the value *)
   | ExprCall calldata
              bool (* T to abort, F to rethrow *)
        (* yields a tuple of results from the call *)
-  | New uvmType (* must not be hybrid *)
-       (* yields a reference of type uvmType *)
-  | AllocA uvmType (* must not be hybrid *)
-       (* yields an iref to the type uvmType *)
-  | NewHybrid uvmType  (* must be a hybrid type *)
-              SSAVar (* length of varying part (can be zero);
+  | New uvm_type (* must not be hybrid *)
+       (* yields a reference of type uvm_type *)
+  | AllocA uvm_type (* must not be hybrid *)
+       (* yields an iref to the type uvm_type *)
+  | NewHybrid uvm_type  (* must be a hybrid type *)
+              ssavar (* length of varying part (can be zero);
                         will cause u.b., or raise exn if
                         get-variable-part-iref call is made on return value *)
        (* yields ref *)
-  | AllocAHybrid uvmType SSAVar
+  | AllocAHybrid uvm_type ssavar
        (* as above, but returns iref *)
-  | NewStack SSAVar (* function reference *)
+  | NewStack ssavar (* function reference *)
        (* yields stack reference *)
-  | NewThread SSAVar (* stack id *)
-              (SSAVar list) (* args for resumption point *)
+  | NewThread ssavar (* stack id *)
+              (ssavar list) (* args for resumption point *)
        (* yields thread reference *)
-  | NewThreadExn SSAVar (* stack id *)
-                 SSAVar (* exception value *)
+  | NewThreadExn ssavar (* stack id *)
+                 ssavar (* exception value *)
        (* yields thread reference (thread resumes with exceptional value) *)
 
-  | NewFrameCursor SSAVar (* stack id *)
+  | NewFrameCursor ssavar (* stack id *)
        (* yields frame cursor *)
     (* stack manipulation API to be expanded *)
-  | GetIref SSAVar (* ref *)
+  | GetIref ssavar (* ref *)
        (* yields corresponding iref *)
-  | GetFieldIref SSAVar (* iref / ptr *)
+  | GetFieldIref ssavar (* iref / ptr *)
                  value  (* field index *)
        (* yields iref/ptr *)
-  | GetElementIref SSAVar (* iref / ptr to array type *)
-                   SSAVar (* array index *)
+  | GetElementIref ssavar (* iref / ptr to array type *)
+                   ssavar (* array index *)
        (* yields iref/ptr *)
-  | ShiftIref SSAVar (* iref/ptr to anything (not void) *)
-              SSAVar (* offset *)
+  | ShiftIref ssavar (* iref/ptr to anything (not void) *)
+              ssavar (* offset *)
        (* yields iref/ptr *)
-  | GetVarPartIref SSAVar (* iref/ptr to hybrid *)
+  | GetVarPartIref ssavar (* iref/ptr to hybrid *)
        (* yeilds iref/ptr to first element of var-part of hybrid IF IT EXISTS *)
 `;
 
 val _ = Datatype`
   instruction =
-    Assign (SSAVar list) expression
-  | Load SSAVar (* destination variable  *)
+  | Assign (ssavar list) expression
+  | Load ssavar (* destination variable  *)
          bool (* T for iref, F for ptr *)
-         SSAVar (* source memory address *)
+         ssavar (* source memory address *)
          memoryorder
-  | Store SSAVar (* value to be written *)
+  | Store ssavar (* value to be written *)
           bool (* T for iref, F for ptr *)
-          SSAVar (* destination memory address *)
+          ssavar (* destination memory address *)
           memoryorder
-  | CmpXchg SSAVar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
+  | CmpXchg ssavar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
             bool (* T for iref, F for ptr *)
             bool (* T for strong, F for weak *)
             memoryorder (* success order *)
             memoryorder (* failure order *)
-            SSAVar (* memory location *)
+            ssavar (* memory location *)
             operand (* expected value *)
             operand (* desired value *)
-  | AtomicRMW SSAVar (* output: old memory value *)
+  | AtomicRMW ssavar (* output: old memory value *)
               bool (* T for iref, F for ptr *)
               memoryorder
-              AtomicRMW_Op
-              SSAVar (* memory location *)
+              atomicrmw_op
+              ssavar (* memory location *)
               operand (* operand for op *)
   | Fence memoryorder
 `
@@ -203,27 +200,27 @@ val _ = type_abbrev("wpid", ``:num``)
 
 val _ = Datatype`
   terminst =
-      Return (SSAVar list)
-    | ThreadExit
-    | Throw (SSAVar list)
-    | TailCall calldata
-    | Branch1 destination
-    | Branch2 SSAVar destination destination
-    | Watchpoint
-        ((wpid # destination) option)
-           (* NONE = unconditional trap *)
-           (* SOME(wpid, dest) = conditional on wpid, trap if set;
-                                 if not, branch to dest *)
-        resumption_data
-    | WPBranch wpid destination destination
-    | Call calldata resumption_data
-    | Swapstack
-        SSAVar (* stackID *)
-        bool (* T if exception values are being transferred *)
-        (SSAVar list) (* parameters *)
-        resumption_data
-    | Switch SSAVar destination (value |-> destination)
-    | ExnInstruction instruction resumption_data
+  | Return (ssavar list)
+  | ThreadExit
+  | Throw (ssavar list)
+  | TailCall calldata
+  | Branch1 destination
+  | Branch2 ssavar destination destination
+  | Watchpoint
+      ((wpid # destination) option)
+         (* NONE = unconditional trap *)
+         (* SOME(wpid, dest) = conditional on wpid, trap if set;
+                               if not, branch to dest *)
+      resumption_data
+  | WPBranch wpid destination destination
+  | Call calldata resumption_data
+  | Swapstack
+      ssavar (* stackID *)
+      bool (* T if exception values are being transferred *)
+      (ssavar list) (* parameters *)
+      resumption_data
+  | Switch ssavar destination (value |-> destination)
+  | ExnInstruction instruction resumption_data
 `;
 
 (* Wrapping expressions with ExnInstruction forces the implementation
@@ -238,44 +235,37 @@ val _ = Datatype`
 
 val _ = Datatype`
   bblock = <|
-    args : (SSAVar # uvmType) list ;
+    args : (ssavar # uvm_type) list ;
     body : instruction list ;
     exit : terminst ;
-    keepalives : SSAVar list
+    keepalives : ssavar list
   |>
 `
 
 
 val _ = Datatype`
   declaration =
-    ConstDecl constname uvmType value
-  | TypeDef typename uvmType
-  | FunctionSignature signame uvmType (uvmType list)
+  | ConstDecl constname uvm_type value
+  | TypeDef typename uvm_type
+  | FunctionSignature signame uvm_type (uvm_type list)
   | FuncDef fnname signame label (label |-> bblock)
 `
-
-
-
-
 
 val _ = type_abbrev("tid", ``:num``)
 
 val _ = type_abbrev("memreqid", ``:num``)
 val _ = type_abbrev("memdeps", ``:memreqid set``)
 
-
-
-val memoryMessage_def = Datatype`
-  memoryMessage = Read  addr memreqid       memoryorder memdeps
-                | Write addr memreqid value memoryorder memdeps
-                | MMFence                   memoryorder
+val memory_message_def = Datatype`
+  memory_message =
+  | Read  addr memreqid       memoryorder memdeps
+  | Write addr memreqid value memoryorder memdeps
+  | MMFence                   memoryorder
 `;
 
-val memoryMessageResolve_def = Datatype`
-    memoryMessageResolve = ResolvedRead value memreqid`;
-
-
-
-
+val memory_message_resolve_def = Datatype`
+  memory_message_resolve =
+  | ResolvedRead value memreqid`;
 
 val _ = export_theory();
+
