@@ -36,6 +36,8 @@ val _ = Datatype`
     offset : num ;
     tid : tid ;
     memreq_map : num |-> ssavar ;
+      (* maps load request ids to the ssa variable that is going to receive
+         the value from memory *)
     addrwr_map : num |-> addr
   |>`
 
@@ -318,4 +320,3 @@ val ts_step_def = Define`
 *)
 
 val _ = export_theory();
-

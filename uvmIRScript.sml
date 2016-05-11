@@ -196,6 +196,35 @@ val _ = Datatype`
   | Fence memoryorder
 `
 
+val expr_read_vars_def = Define`
+  expr_read_vars ...
+`
+
+
+val read_vars_def = Define`
+  (read_vars (Assign _ e) = expr_read_vars e) /\
+  (read_vars (Load _ _ src _) = {src}) /\
+  | Store ssavar (* value to be written *)
+          bool (* T for iref, F for ptr *)
+          ssavar (* destination memory address *)
+          memoryorder
+  | CmpXchg ssavar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
+            bool (* T for iref, F for ptr *)
+            bool (* T for strong, F for weak *)
+            memoryorder (* success order *)
+            memoryorder (* failure order *)
+            ssavar (* memory location *)
+            operand (* expected value *)
+            operand (* desired value *)
+  | AtomicRMW ssavar (* output: old memory value *)
+              bool (* T for iref, F for ptr *)
+              memoryorder
+              atomicrmw_op
+              ssavar (* memory location *)
+              operand (* operand for op *)
+  | Fence memoryorder
+`
+
 val _ = type_abbrev("wpid", ``:num``)
 
 val _ = Datatype`
@@ -268,4 +297,3 @@ val memory_message_resolve_def = Datatype`
   | ResolvedRead value memreqid`;
 
 val _ = export_theory();
-
