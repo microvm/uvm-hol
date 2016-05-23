@@ -196,33 +196,45 @@ val _ = Datatype`
   | Fence memoryorder
 `
 
-val expr_read_vars_def = Define`
-  expr_read_vars ...
+val read_opnd_vars_def = Define`
+  read_opnd_vars (opnd : operand) : ssavar set =
+    case opnd of
+    | SSAV_OP v => {v}
+    | CONST_OP _ => {}
 `
 
+val read_expr_vars_def = Define`
+  read_expr_vars (expr : expression) : ssavar set =
+    case expr of
+    | Binop _ a b => read_opnd_vars a ∪ read_opnd_vars b
+    | Value _ => {}
+    | ExprCall cd _ => {cd.methodname} ∪ LIST_TO_SET cd.args
+    | New _ => {}
+    | AllocA _ => {}
+    | NewHybrid _ len => {len}
+    | AllocAHybrid _ len => {len}
+    | NewStack fn => {fn}
+    | NewThread stack args => {stack} ∪ LIST_TO_SET args
+    | NewThreadExn stack exn => {stack; exn}
+    | NewFrameCursor stack => {stack}
+    | GetIref ref => {ref}
+    | GetFieldIref ref _ => {ref}
+    | GetElementIref ref index => {ref; index}
+    | ShiftIref ref offset => {ref; offset}
+    | GetVarPartIref ref => {ref}
+`
 
 val read_vars_def = Define`
-  (read_vars (Assign _ e) = expr_read_vars e) /\
-  (read_vars (Load _ _ src _) = {src}) /\
-  | Store ssavar (* value to be written *)
-          bool (* T for iref, F for ptr *)
-          ssavar (* destination memory address *)
-          memoryorder
-  | CmpXchg ssavar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
-            bool (* T for iref, F for ptr *)
-            bool (* T for strong, F for weak *)
-            memoryorder (* success order *)
-            memoryorder (* failure order *)
-            ssavar (* memory location *)
-            operand (* expected value *)
-            operand (* desired value *)
-  | AtomicRMW ssavar (* output: old memory value *)
-              bool (* T for iref, F for ptr *)
-              memoryorder
-              atomicrmw_op
-              ssavar (* memory location *)
-              operand (* operand for op *)
-  | Fence memoryorder
+  read_vars (inst : instruction) : ssavar set =
+    case inst of
+    | Assign _ e => read_expr_vars e
+    | Load _ _ src _ => {src}
+    | Store src _ _ _ => {src}
+    | CmpXchg _ _ _ _ _ loc exp des =>
+        {loc} ∪ read_opnd_vars exp ∪ read_opnd_vars des
+    | AtomicRMW _ _ _ _ loc opnd =>
+        {loc} ∪ read_opnd_vars opnd
+    | Fence _ => {}
 `
 
 val _ = type_abbrev("wpid", ``:num``)
