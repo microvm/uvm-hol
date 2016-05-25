@@ -113,12 +113,12 @@ val current_inst_def = Define`
 val opnd_value_def = Define`
   opnd_value (state : thread_state) (x : operand) : (value # memdeps) or_error =
     case x of
-    | SSAV_OP ssa => (
+    | VarOp ssa => (
         case FLOOKUP state.curframe.ssavars ssa of
         | SOME (SOME v, m) => return (v, m)
         | SOME (NONE, _) => Error ("variable " ++ ssa ++ " not yet available")
         | NONE => Error ("variable " ++ ssa ++ " does not exist"))
-    | CONST_OP v => return (v, {})
+    | ConstOp v => return (v, {})
 `
 
 (*
@@ -129,9 +129,9 @@ val opnd_value_def = Define`
 val eval_bop_def = Define`
   eval_bop bop v1 v2 : (value list) or_error =
     case bop of
-    | Add =>
+    | ADD =>
         do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
-    | Sdiv =>
+    | SDIV =>
         do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
 `
 

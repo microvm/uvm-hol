@@ -18,7 +18,7 @@ val _ = Datatype`
     values    : value option ;
     mid       : memreqid ;
     thread_id : tid ;
-    order     : memoryorder ;
+    order     : memory_order ;
     ddeps     : memdeps
   |>
 `;

@@ -6,44 +6,88 @@ open uvmValuesTheory;
 val _ = new_theory "uvmIR";
 
 val _ = type_abbrev ("ssavar", ``:string``)
-
 val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
-
 val _ = type_abbrev ("trap_data", ``:num``)
 
 val _ = Datatype`
-  memoryorder =
-    NOT_ATOMIC | RELAXED | CONSUME | ACQUIRE | RELEASE | ACQ_REL | SEQ_CST
-`;
+  memory_order =
+  | NOT_ATOMIC
+  | RELAXED
+  | CONSUME
+  | ACQUIRE
+  | RELEASE
+  | ACQ_REL
+  | SEQ_CST
+`
 
 val _ = Datatype`
-  binop = Add | Sub | Mul | Sdiv | Srem | Udiv | Urem | Shl | LShr | AShr
-        | And | Or | Xor | FAdd | FSub | FMul | FDiv | FRem
-`;
+  bin_op =
+  | ADD
+  | SUB
+  | MUL
+  | SDIV
+  | SREM
+  | UDIV
+  | UREM
+  | SHL
+  | LSHR
+  | ASHR
+  | AND
+  | OR
+  | XOR
+  | FADD
+  | FSUB
+  | FMUL
+  | FDIV
+  | FREM
+`
 
-val (binoptype_rules, binoptype_ind, binoptype_cases) = Hol_reln`
-  (∀n opn. opn ∈ {Add; Sub; Mul; Sdiv; Srem; Udiv; Urem; And; Or; Xor} ⇒
-           binoptype opn (Int n) (Int n) (Int n)) ∧
+val (bin_op_type_rules, bin_op_type_ind, bin_op_type_cases) = Hol_reln`
+  (∀n opn. opn ∈ {ADD; SUB; MUL; SDIV; SREM; UDIV; UREM; AND; OR; XOR} ⇒
+           bin_op_type opn (Int n) (Int n) (Int n)) ∧
 
-  (∀n m opn. opn ∈ {Shl; LShr; AShr} ⇒
-             binoptype opn (Int n) (Int m) (Int n)) ∧
+  (∀n m opn. opn ∈ {SHL; LSHR; ASHR} ⇒
+             bin_op_type opn (Int n) (Int m) (Int n)) ∧
 
-  (∀ty opn. fp_type ty ∧ opn ∈ {FAdd; FSub; FMul; FDiv; FRem} ⇒
-            binoptype opn ty ty ty)
-`;
+  (∀ty opn. fp_type ty ∧ opn ∈ {FADD; FSUB; FMUL; FDIV; FREM} ⇒
+            bin_op_type opn ty ty ty)
+`
 
 val _ = Datatype`
-  cmpOp = EQ | NE | SGE | SGT | SLE | SLT | UGE | UGT | ULE | ULT
-        | FFALSE | FTRUE | FOEQ | FOGT | FOGE | FOLT | FOLE | FONE
-        | FORD | FUEQ | FUGT | FUGE | FULT | FULE | FUNE | FUNO
+  cmp_op =
+  | EQ
+  | NE
+  | SGE
+  | SGT
+  | SLE
+  | SLT
+  | UGE
+  | UGT
+  | ULE
+  | ULT
+  | FFALSE
+  | FTRUE
+  | FOEQ
+  | FOGT
+  | FOGE
+  | FOLT
+  | FOLE
+  | FONE
+  | FORD
+  | FUEQ
+  | FUGT
+  | FUGE
+  | FULT
+  | FULE
+  | FUNE
+  | FUNO
 `
 
 val cmpresult_def = Define`
   cmpresult (Vector _ sz) = Vector (Int 1) sz ∧
   cmpresult _ = Int 1
-`;
-
+`
 
 val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
   (∀iop ity.
@@ -69,8 +113,7 @@ val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
               FORD ; FUEQ ; FUGT ; FUGE ; FULT ; FULE ; FUNE ; FUNO }
     ⇒
       cmpOptype fop fty fty (cmpresult fty))
-`;
-
+`
 
 val _ = type_abbrev("constname", ``:string``)
 val _ = type_abbrev("typename", ``:string``)
@@ -90,7 +133,7 @@ val _ = Datatype`
                               CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
                         *)
   | DA_Value value
-`;
+`
 
 val _ = type_abbrev("destination", ``:block_label # (destarg list)``)
 
@@ -99,12 +142,14 @@ val _ = Datatype`
     normaldest : destination ;
     exceptionaldest : destination
   |>
-`;
+`
 
 val _ = type_abbrev("ffitype", ``:string``)
 
 val _ = Datatype`
-  callconvention = Mu | Foreign ffitype
+  callconvention =
+  | Mu
+  | Foreign ffitype
 `
 
 val _ = Datatype`
@@ -117,14 +162,28 @@ val _ = Datatype`
 
 val _ = Datatype`
   atomicrmw_op =
-    XCHG | ADD | SUB | AND | NAND | OR | XOR | MAX | MIN | UMAX | UMIN
+  | RMW_XCHG
+  | RMW_ADD
+  | RMW_SUB
+  | RMW_AND
+  | RMW_NAND
+  | RMW_OR
+  | RMW_XOR
+  | RMW_MAX
+  | RMW_MIN
+  | RMW_UMAX
+  | RMW_UMIN
 `
 
-val _ = Datatype`operand = SSAV_OP ssavar | CONST_OP value`
+val _ = Datatype`
+  operand =
+  | VarOp ssavar
+  | ConstOp value
+`
 
 val _ = Datatype`
   expression =
-  | Binop binop operand operand
+  | Binop bin_op operand operand
        (* performs arithmetic, yielding a value *)
   | Value value
        (* yields the value *)
@@ -175,33 +234,33 @@ val _ = Datatype`
   | Load ssavar (* destination variable  *)
          bool (* T for iref, F for ptr *)
          ssavar (* source memory address *)
-         memoryorder
+         memory_order
   | Store ssavar (* value to be written *)
           bool (* T for iref, F for ptr *)
           ssavar (* destination memory address *)
-          memoryorder
+          memory_order
   | CmpXchg ssavar (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
             bool (* T for iref, F for ptr *)
             bool (* T for strong, F for weak *)
-            memoryorder (* success order *)
-            memoryorder (* failure order *)
+            memory_order (* success order *)
+            memory_order (* failure order *)
             ssavar (* memory location *)
             operand (* expected value *)
             operand (* desired value *)
   | AtomicRMW ssavar (* output: old memory value *)
               bool (* T for iref, F for ptr *)
-              memoryorder
+              memory_order
               atomicrmw_op
               ssavar (* memory location *)
               operand (* operand for op *)
-  | Fence memoryorder
+  | Fence memory_order
 `
 
 val read_opnd_vars_def = Define`
   read_opnd_vars (opnd : operand) : ssavar set =
     case opnd of
-    | SSAV_OP v => {v}
-    | CONST_OP _ => {}
+    | VarOp v => {v}
+    | ConstOp _ => {}
 `
 
 val read_expr_vars_def = Define`
@@ -300,9 +359,9 @@ val _ = type_abbrev("memdeps", ``:memreqid set``)
 
 val memory_message_def = Datatype`
   memory_message =
-  | Read  addr memreqid       memoryorder memdeps
-  | Write addr memreqid value memoryorder memdeps
-  | MMFence                   memoryorder
+  | Read  addr memreqid       memory_order memdeps
+  | Write addr memreqid value memory_order memdeps
+  | MMFence                   memory_order
 `;
 
 val memory_message_resolve_def = Datatype`
