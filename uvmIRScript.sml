@@ -10,6 +10,9 @@ val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
 val _ = type_abbrev ("trap_data", ``:num``)
 
+(* Memory order (see the spec)
+   https://github.com/microvm/microvm-spec/blob/master/memory-model.rest#memory-operations
+*)
 val _ = Datatype`
   memory_order =
   | NOT_ATOMIC
@@ -21,28 +24,34 @@ val _ = Datatype`
   | SEQ_CST
 `
 
+(* Binary operations (see the spec)
+   https://github.com/microvm/microvm-spec/blob/master/instruction-set.rest#binary-operations
+*)
 val _ = Datatype`
   bin_op =
-  | ADD
-  | SUB
-  | MUL
-  | SDIV
-  | SREM
-  | UDIV
-  | UREM
-  | SHL
-  | LSHR
-  | ASHR
-  | AND
-  | OR
-  | XOR
-  | FADD
-  | FSUB
-  | FMUL
-  | FDIV
-  | FREM
+  | ADD  (* <int> - add *)
+  | SUB  (* <int> - subtract *)
+  | MUL  (* <int> - multiply *)
+  | SDIV (* <int> - signed divide *)
+  | SREM (* <int> - signed remainder *)
+  | UDIV (* <int> - unsigned divide *)
+  | UREM (* <int> - unsigned remainder *)
+  | SHL  (* <int> - left shift *)
+  | LSHR (* <int> - logical right shift *)
+  | ASHR (* <int> - arithmetic right shift *)
+  | AND  (* <int> - bitwise and *)
+  | OR   (* <int> - bitwise or *)
+  | XOR  (* <int> - bitwise exclusive or *)
+  | FADD (* <float|double> - FP add *)
+  | FSUB (* <float|double> - FP subtract *)
+  | FMUL (* <float|double> - FP multiply *)
+  | FDIV (* <float|double> - FP divide *)
+  | FREM (* <float|double> - FP remainder *)
 `
 
+(* Binary operation types: Relation between a binary operation * and a triple of
+   types (α, β, ρ) such that (a: α) * (b: β) = (r: ρ).
+*)
 val (bin_op_type_rules, bin_op_type_ind, bin_op_type_cases) = Hol_reln`
   (∀n opn. opn ∈ {ADD; SUB; MUL; SDIV; SREM; UDIV; UREM; AND; OR; XOR} ⇒
            bin_op_type opn (Int n) (Int n) (Int n)) ∧
@@ -54,41 +63,48 @@ val (bin_op_type_rules, bin_op_type_ind, bin_op_type_cases) = Hol_reln`
             bin_op_type opn ty ty ty)
 `
 
+(* Comparison operations (see the spec)
+   https://github.com/microvm/microvm-spec/blob/master/instruction-set.rest#comparison
+*)
 val _ = Datatype`
   cmp_op =
-  | EQ
-  | NE
-  | SGE
-  | SGT
-  | SLE
-  | SLT
-  | UGE
-  | UGT
-  | ULE
-  | ULT
-  | FFALSE
-  | FTRUE
-  | FOEQ
-  | FOGT
-  | FOGE
-  | FOLT
-  | FOLE
-  | FONE
-  | FORD
-  | FUEQ
-  | FUGT
-  | FUGE
-  | FULT
-  | FULE
-  | FUNE
-  | FUNO
+  | EQ     (* <any EQ-comparable> - equal *)
+  | NE     (* <any EQ-comparable> - not equal *)
+  | SGE    (* <int> - signed greater than or equal *)
+  | SGT    (* <int> - signed greater than *)
+  | SLE    (* <int> - signed less than or equal *)
+  | SLT    (* <int> - signed less than *)
+  | UGE    (* <any ULT-comparable> - unsigned greater than or equal *)
+  | UGT    (* <any ULT-comparable> - unsigned greater than *)
+  | ULE    (* <any ULT-comparable> - unsigned less than or equal *)
+  | ULT    (* <any ULT-comparable> - unsigned less than *)
+  | FFALSE (* <float|double> - always false *)
+  | FTRUE  (* <float|double> - always true *)
+  | FOEQ   (* <float|double> - ordered equal *)
+  | FOGT   (* <float|double> - ordered greater than *)
+  | FOGE   (* <float|double> - ordered greater than or equal *)
+  | FOLT   (* <float|double> - ordered less than *)
+  | FOLE   (* <float|double> - ordered less than or equal *)
+  | FONE   (* <float|double> - ordered not equal *)
+  | FORD   (* <float|double> - ordered *)
+  | FUEQ   (* <float|double> - unordered equal *)
+  | FUGT   (* <float|double> - unordered greater than *)
+  | FUGE   (* <float|double> - unordered greater than or equal *)
+  | FULT   (* <float|double> - unordered less than *)
+  | FULE   (* <float|double> - unordered less than or equal *)
+  | FUNE   (* <float|double> - unordered not equal *)
+  | FUNO   (* <float|double> - unordered *)
 `
 
+(* The result type of a comparison operation on a given type *)
 val cmpresult_def = Define`
   cmpresult (Vector _ sz) = Vector (Int 1) sz ∧
   cmpresult _ = Int 1
 `
 
+(* Comparison operation types: Relation between a comparison operation ≤ and a
+   triple of types (α, β, ρ) such that (a: α) ≤ (b: β) = (r: ρ).
+*)
 val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
   (∀iop ity.
       maybeVector eqcomparable ity ∧ iop ∈ {EQ ; NE}
@@ -160,21 +176,25 @@ val _ = Datatype`
   |>
 `
 
+(* AtomicRMW operators (see the spec)
+   https://github.com/microvm/microvm-spec/blob/master/instruction-set.rest#atomicrmw-instruction
+*)
 val _ = Datatype`
   atomicrmw_op =
-  | RMW_XCHG
-  | RMW_ADD
-  | RMW_SUB
-  | RMW_AND
-  | RMW_NAND
-  | RMW_OR
-  | RMW_XOR
-  | RMW_MAX
-  | RMW_MIN
-  | RMW_UMAX
-  | RMW_UMIN
+  | RMW_XCHG (* <any> - exchange *)
+  | RMW_ADD  (* <int> - add *)
+  | RMW_SUB  (* <int> - subtract *)
+  | RMW_AND  (* <int> - bitwise and *)
+  | RMW_NAND (* <int> - bitwise nand *)
+  | RMW_OR   (* <int> - bitwise or *)
+  | RMW_XOR  (* <int> - bitwise xor *)
+  | RMW_MAX  (* <int> - signed max *)
+  | RMW_MIN  (* <int> - signed min *)
+  | RMW_UMAX (* <int> - unsigned max *)
+  | RMW_UMIN (* <int> - unsigned min *)
 `
 
+(* Either an SSA variable or a constant *)
 val _ = Datatype`
   operand =
   | VarOp ssavar
