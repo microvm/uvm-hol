@@ -1,17 +1,23 @@
 open HolKernel Parse boolLib bossLib;
 
 open uvmIRTheory
+open errorMonadTheory
 open lcsymtacs
 open monadsyntax
 
 val _ = new_theory "uvmThreadSemantics";
 
+val _ = Datatype`
+  fninfo = <|
+    start_label : label ;
+    blocks : block_label |-> bblock
+  |>
+`
 
 val _ = Datatype`
   frame = <|
-    function : fnname ;
-    ssavars : ssavar |-> value option # memdeps;
-    code : block_label |-> bblock
+    fn : fnvname ;
+    ssavars : ssavar |-> value option # memdeps
   |>`
 
 val _ = Datatype`
@@ -33,157 +39,154 @@ val _ = Datatype`
     stack : sus_frame list ;
     curframe : frame ;
     curblock : block_label ;
-    offset : num ;
+    pc : num ;
     tid : tid ;
     memreq_map : num |-> ssavar ;
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
-    addrwr_map : num |-> addr
+    addrwr_map : num |-> addr ;
+    pending_insts : instruction set
   |>`
 
-val _ = Datatype`
-  tsstep_result = Success α | Abort | Blocked
-`
-
-val tsresult_case_eq = prove_case_eq_thm {
-  case_def = TypeBase.case_def_of ``:α tsstep_result``,
-  nchotomy = TypeBase.nchotomy_of ``:α tsstep_result``
-};
-
-val paircase_eq = prove(
-  ``(pair_CASE x f = y) ⇔ ∃a b. (x = (a,b)) ∧ (f a b = y)``,
-  Cases_on `x` >> simp[]);
-
-(* set up TSM, a monad *)
-val _ = type_abbrev(
-  "TSM",
-  ``:thread_state -> (α # thread_state # memory_message list) tsstep_result``)
-
-val TSUNIT_def = Define`
-  TSUNIT (x:α) :α TSM = λts. Success (x, ts, [])
-`;
-
-val _ = overload_on ("return", ``TSUNIT``)
-
-val TSBIND_def = Define`
-  TSBIND (x : α TSM) (f : α -> β TSM) : β TSM =
-    λts0.
-      case x ts0 of
-      | Success (a, ts1, msgs1) =>
-        (case f a ts1 of
-         | Success(b, ts2, msgs2) => Success(b, ts2, msgs1 ++ msgs2)
-         | r => r)
-      | Abort => Abort
-      | Blocked => Blocked
-`;
-
-val TSLOAD_def = Define`
-  TSLOAD (v : ssavar) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
-    λts0.
-      let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION (FDOM ts0.addrwr_map)) in
-      let mesg = Read a reqnum m (depa UNION {reqnum}) in
-      let ts1 = ts0 with memreq_map updated_by (λrmap. rmap |+ (reqnum, v)) in
-      let ts2 = ts1 with curframe updated_by (λf. f with ssavars updated_by (λs. s |+ (v,(NONE,depa UNION {reqnum}))))
-      in
-        Success((), ts2, [mesg])
-`
-
-val TSSTORE_def = Define`
-  TSSTORE (v : value, depv : memdeps) (a : addr, depa : memdeps) (m : memoryorder) : unit TSM =
-    λts0.
-      let reqnum = LEAST n. n ∉ ((FDOM ts0.memreq_map) UNION FDOM (ts0.addrwr_map)) in
-      let mesg = Write a reqnum v m (depv UNION depa) in
-      let ts1 = ts0 with addrwr_map updated_by (λrmap. rmap |+ (reqnum, a))
-      in
-        Success((), ts1, [mesg])
-`;
-
-val _ = overload_on ("monad_bind", ``TSBIND``)
-val _ = overload_on ("monad_unitbind", ``λm1 m2. TSBIND m1 (K m2)``)
-
-val TSDIE_def = Define`TSDIE : α TSM = λts. Abort`
-val TSBLOCKED_def = Define`TSBLOCKED : α TSM = λts. Blocked`
-
-(* Sanity theorems about the monad *)
-
-val TSBIND_DIEL = store_thm(
-  "TSBIND_DIEL[simp]",
-  ``TSBIND TSDIE f = TSDIE``,
-  simp[FUN_EQ_THM, TSBIND_def, TSDIE_def]);
-
-val TSBIND_UNITL = store_thm(
-  "TSBIND_UNITL[simp]",
-  ``TSBIND (TSUNIT x) f = f x``,
-  dsimp[FUN_EQ_THM, TSBIND_def, TSUNIT_def, tsresult_case_eq, paircase_eq] >>
-  csimp[] >> qx_gen_tac `ts` >> Cases_on `f x ts` >> simp[] >>
-  qcase_tac `f x ts = Success a` >> PairCases_on `a` >> simp[]);
-
-val TSBIND_UNITR = store_thm(
-  "TSBIND_UNITR[simp]",
-  ``TSBIND tsm TSUNIT = tsm``,
-  dsimp[FUN_EQ_THM, TSBIND_def, TSUNIT_def, tsresult_case_eq, paircase_eq] >>
-  csimp[] >> qx_gen_tac `ts` >> Cases_on `tsm ts` >> simp[] >>
-  qcase_tac `tsm ts = Success a` >> PairCases_on `a` >> simp[]);
-
-val TSGET_def = Define`
-  TSGET : thread_state TSM = λts. Success(ts, ts, [])
-`
-
-val read_var_def = Define`
-  read_var (x : ssavar) : (value # memdeps) TSM =
+(* 
+ * Gets the current basic block for a given state. Returns an error if the state
+ * is malformed (has an invalid function and/or block name).
+ *)
+val current_block_def = Define`
+  current_block (code : fnvname |-> fninfo) (state : thread_state) : bblock or_error =
     do
-      ts <- TSGET;
-      case FLOOKUP ts.curframe.ssavars x of
-      | NONE => TSDIE
-      | SOME (NONE,_) => TSBLOCKED
-      | SOME ((SOME v,deps)) => return (v,deps)
+      current_fn <- expect (FLOOKUP code state.curframe.fn)
+        ("no function named " ++ FST state.curframe.fn) ;
+      expect (FLOOKUP current_fn.blocks state.curblock)
+        ("no block named " ++ state.curblock)
     od
 `
 
-val get_value_of_def = Define`
-  get_value_of (x : operand) : (value # memdeps) TSM =
+(* The set of pending SSA variables in a frame *)
+val pending_vars_def = Define`
+  pending_vars (f : frame) : ssavar set =
+    {v | ∃val md. FLOOKUP f.ssavars v = SOME (SOME val, md)}
+`
+
+(* 
+ * True if the instruction `i` is blocked (waiting on the value of some variable
+ * it depends on) in the state `state`.
+ *)
+val is_blocked_def = Define`
+  is_blocked (state : thread_state) (i : instruction) : bool ⇔
+    DISJOINT (pending_vars state.curframe) (read_vars i)
+`
+
+(* 
+ * True if the state's program counter is at (or after) the terminal instruction
+ * of its current basic block. Returns an error if the state is malformed.
+ *)
+val at_block_end_def = Define`
+  at_block_end (code : fnvname |-> fninfo) (state : thread_state) : bool or_error =
+    do b <- current_block code state; return (LENGTH b.body ≤ state.pc) od
+`
+
+(* 
+ * The current instruction at the state's program counter. Returns an error if
+ * the state is malformed or the program counter has reached the end of the
+ * block.
+ *)
+val current_inst_def = Define`
+  current_inst (code : fnvname |-> fninfo) (state : thread_state) : instruction or_error =
+    do
+      at_end <- at_block_end code state ;
+      block <- if at_end
+                 then Error "no current instruction; program counter at end"
+                 else current_block code state ;
+      return (EL state.pc block.body)
+    od
+`
+
+(*
+ * Returns the value of an operand in a given state, or an error if the
+ * operand's variable is not yet available.
+ *)
+val opnd_value_def = Define`
+  opnd_value (state : thread_state) (x : operand) : (value # memdeps) or_error =
     case x of
-    | SSAV_OP ssa => read_var ssa
+    | SSAV_OP ssa => (
+        case FLOOKUP state.curframe.ssavars ssa of
+        | SOME (SOME v, m) => return (v, m)
+        | SOME (NONE, _) => Error ("variable " ++ ssa ++ " not yet available")
+        | NONE => Error ("variable " ++ ssa ++ " does not exist"))
     | CONST_OP v => return (v, {})
 `
 
-val opt_lift_def = Define`
-opt_lift NONE = TSDIE /\
-opt_lift (SOME x) = return x`;
-
-val evalbop_def = Define`
-  evalbop bop v1 v2 : (value list) TSM =
+(*
+ * Evaluates a binary operation, returning the values it produces. Returns an
+ * error if the values `v1`, `v2` are incorrectly typed or if the binary
+ * operation produces undefined behavior (such as division by zero).
+ *)
+val eval_bop_def = Define`
+  eval_bop bop v1 v2 : (value list) or_error =
     case bop of
-    | Add => (do v <- opt_lift (value_add v1 v2) ; return [v] od)
-    | Sdiv => (do v <- opt_lift (value_div v1 v2) ; return [v] od)
-`;
+    | Add => 
+        do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
+    | Sdiv =>
+        do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
+`
 
-val eval_exp_def = Define`
-  eval_exp (e : expression) : ((value list) # memdeps) TSM =
+(*
+ * Evaluates an expression in a given state, returning the values it produces.
+ * Returns an error if the expression is ill-typed or if it produces undefined
+ * behavior (such as division by zero).
+ *)
+val eval_expr_def = Define`
+  eval_expr (state : thread_state) (e : expression) : ((value list) # memdeps) or_error =
     case e of
     | Binop bop v1 v2 =>
         do
-          (val1, dep1) <- get_value_of v1 ;
-          (val2, dep2) <- get_value_of v2 ;
-          v <- evalbop bop val1 val2 ;
+          (val1, dep1) <- opnd_value state v1 ;
+          (val2, dep2) <- opnd_value state v2 ;
+          v <- eval_bop bop val1 val2 ;
           return (v, dep1 UNION dep2)
         od
     | Value v => return ([v], {})
 `
 
-val TSFUPD_def = Define`
-  TSFUPD (f:thread_state -> thread_state) : unit TSM = λts. Success((), f ts, [])
-`;
 
-val _ = overload_on("TSSET", ``λts. TSFUPD (K ts)``)
+(* -----------------------------------------------------------------------------
+ * TODO: CONTINUE HERE:
+ *
+ * Consider the following scenario: A loop that sums the contents of an array.
+ *
+ *     %sum(%array, %len, %i, %n):
+ *       %ref    = GETELEMIREF %array %i
+ *       %loaded = LOAD %ref
+ *       %n2     = ADD %n %loaded
+ *       %i2     = ADD %i @const_1
+ *       %done   = GE %i %len
+ *       BRANCH2 %done %exit(n) %sum(array, len, i2, n2)
+ *
+ * As this loop runs, it will build up a chain of dependencies, which will
+ * contain repeated instances of each SSA variable. It seems like mapping SSA
+ * variables to values is not enough. Perhaps a memreq should be generated for
+ * every SSA variable?
+ *
+ * -----------------------------------------------------------------------------
+ *)
 
-val TSASSERT_def = Define`
-  TSASSERT (P : bool) : unit TSM =
-    λts. if P then Success((), ts, []) else Abort
-`;
+val enqueue_inst_def = Define`
+  enqueue_inst (state : thread_state) (inst : instruction) : thread_state or_error =
+    
+`
 
-val valbind_def = Define`
-  valbind vars (values, dep) : unit TSM =
+(*
+ * Creates a new thread state in which a single variable has been assigned a new
+ * value.
+ *)
+val bind_state_var_def = Define`
+  bind_state_var (state : thread_state)
+                 (var : ssavar)
+                 (val : value option)
+                 (deps : memdeps)
+                 : thread_state or_error =
+    state with 
     if LENGTH vars ≠ LENGTH values ∨ ¬ALL_DISTINCT vars then TSDIE
     else do
       ts0 <- TSGET ;
@@ -197,6 +200,54 @@ val valbind_def = Define`
                    (ZIP(vars,values)))
     od
 `;
+
+val exec_inst_def = Define`
+  exec_inst (inst : instruction) (state : thread_state) : thread_state or_error =
+    case inst of
+    | Assign vtuple exp =>
+        do
+           values <- eval_exp exp ;
+           valbind vtuple values
+        od
+    | Load destvar isiref srcvar morder =>
+        do
+           (av, depa) <- read_var srcvar ;
+           a <- opt_lift (value_to_address av) ;
+           TSLOAD destvar (a,depa) morder
+        od
+    | Store srcvar isiref destvar morder =>
+        do
+           (v,depv) <- read_var srcvar ;
+           (av,depa) <- read_var destvar ;
+           a <- opt_lift (value_to_address av) ;
+           TSSTORE (v,depv) (a,depa) morder
+        od
+(*    | Fence morder =>
+        do
+            (λts. Success((),ts,[Fence morder]))
+        od*)
+     (*| AtomicRMW opr destloc srcvar isiref morder => *)
+`
+
+val (exec_rules, exec_ind, exec_cases) = Hol_reln`
+  (∀ts0 ts1 i.
+      i ∈ ts0.pending_insts ∧
+      ¬is_blocked ts0 i ∧
+      ts1 = exec_inst i (ts0 with pending_insts updated_by (DELETE) i)
+    ⇒ exec code ts0 ts1) ∧
+
+  (∀ts0 ts1.
+      ¬at_block_end code ts0 ∧
+      ts1 = ts0 with <|
+              pc updated_by SUC ;
+              pending_insts updated_by (INSERT) (current_inst code ts0) 
+            |>
+    ⇒ exec code ts0 ts1)
+`
+
+val paircase_eq = prove(
+  ``(pair_CASE x f = y) ⇔ ∃a b. (x = (a,b)) ∧ (f a b = y)``,
+  Cases_on `x` >> simp[]);
 
 val exec_inst_def = Define`
   exec_inst inst : unit TSM =
@@ -312,9 +363,9 @@ val ts_step_def = Define`
     case FLOOKUP ts0.curframe.code ts0.curblock of
       NONE => Abort
     | SOME bb =>
-      if ts0.offset > LENGTH bb.body then Abort
-      else if ts0.offset = LENGTH bb.body then exec_terminst ts0 bb.exit
-      else exec_inst ts0 (EL ts0.offset bb.body)
+      if ts0.pc > LENGTH bb.body then Abort
+      else if ts0.pc = LENGTH bb.body then exec_terminst ts0 bb.exit
+      else exec_inst ts0 (EL ts0.pc bb.body)
 `;
 
 *)

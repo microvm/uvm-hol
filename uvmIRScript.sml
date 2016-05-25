@@ -75,6 +75,7 @@ val (cmpOptype_rules, cmpOptype_ind, cmpOptype_cases) = Hol_reln`
 val _ = type_abbrev("constname", ``:string``)
 val _ = type_abbrev("typename", ``:string``)
 val _ = type_abbrev("fnname", ``:string``)
+val _ = type_abbrev("fnvname", ``:fnname # num``)
 val _ = type_abbrev("signame", ``:string``)
 val _ = type_abbrev("label", ``:string``)
 
