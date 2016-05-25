@@ -16,7 +16,7 @@ val _ = Datatype`
 
 val _ = Datatype`
   frame = <|
-    fn : fnvname ;
+    fn : fninfo ;
     ssavars : ssavar |-> value option # memdeps
   |>`
 
@@ -35,11 +35,15 @@ val _ = type_abbrev(
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
 val _ = Datatype`
+  running_frame = <| curframe : frame ;
+                     curblock : block_label ;
+                     pc : num |>
+`
+
+val _ = Datatype`
   thread_state = <|
     stack : sus_frame list ;
-    curframe : frame ;
-    curblock : block_label ;
-    pc : num ;
+    running_frame : running_frame option ;
     tid : tid ;
     memreq_map : num |-> ssavar ;
       (* maps load request ids to the ssa variable that is going to receive
@@ -48,36 +52,36 @@ val _ = Datatype`
     pending_insts : instruction set
   |>`
 
-(* 
+(*
  * Gets the current basic block for a given state. Returns an error if the state
  * is malformed (has an invalid function and/or block name).
  *)
 val current_block_def = Define`
-  current_block (code : fnvname |-> fninfo) (state : thread_state) : bblock or_error =
+  current_block (state : thread_state) : bblock or_error =
     do
-      current_fn <- expect (FLOOKUP code state.curframe.fn)
-        ("no function named " ++ FST state.curframe.fn) ;
-      expect (FLOOKUP current_fn.blocks state.curblock)
-        ("no block named " ++ state.curblock)
+      rframe <- expect state.running_frame
+        "thread not running" ;
+      expect (FLOOKUP rframe.curframe.fn.blocks rframe.curblock)
+        ("no block named " ++ rframe.curblock)
     od
 `
 
-(* The set of pending SSA variables in a frame *)
-val pending_vars_def = Define`
-  pending_vars (f : frame) : ssavar set =
+(* The set of SSA variables in a frame that have values *)
+val defined_vars_def = Define`
+  defined_vars (f : frame) : ssavar set =
     {v | ∃val md. FLOOKUP f.ssavars v = SOME (SOME val, md)}
 `
 
-(* 
- * True if the instruction `i` is blocked (waiting on the value of some variable
- * it depends on) in the state `state`.
+(*
+ * True if the instruction `i` is executable (all the variables it reads are
+ * defined) in the state `state`.
  *)
-val is_blocked_def = Define`
-  is_blocked (state : thread_state) (i : instruction) : bool ⇔
-    DISJOINT (pending_vars state.curframe) (read_vars i)
+val is_ready_def = Define`
+  is_ready (state : thread_state) (i : instruction) : bool ⇔
+    read_vars i ⊆ defined_vars state.curframe
 `
 
-(* 
+(*
  * True if the state's program counter is at (or after) the terminal instruction
  * of its current basic block. Returns an error if the state is malformed.
  *)
@@ -86,7 +90,7 @@ val at_block_end_def = Define`
     do b <- current_block code state; return (LENGTH b.body ≤ state.pc) od
 `
 
-(* 
+(*
  * The current instruction at the state's program counter. Returns an error if
  * the state is malformed or the program counter has reached the end of the
  * block.
@@ -125,7 +129,7 @@ val opnd_value_def = Define`
 val eval_bop_def = Define`
   eval_bop bop v1 v2 : (value list) or_error =
     case bop of
-    | Add => 
+    | Add =>
         do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
     | Sdiv =>
         do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
@@ -173,7 +177,7 @@ val eval_expr_def = Define`
 
 val enqueue_inst_def = Define`
   enqueue_inst (state : thread_state) (inst : instruction) : thread_state or_error =
-    
+
 `
 
 (*
@@ -186,7 +190,7 @@ val bind_state_var_def = Define`
                  (val : value option)
                  (deps : memdeps)
                  : thread_state or_error =
-    state with 
+    state with
     if LENGTH vars ≠ LENGTH values ∨ ¬ALL_DISTINCT vars then TSDIE
     else do
       ts0 <- TSGET ;
@@ -232,17 +236,29 @@ val exec_inst_def = Define`
 val (exec_rules, exec_ind, exec_cases) = Hol_reln`
   (∀ts0 ts1 i.
       i ∈ ts0.pending_insts ∧
-      ¬is_blocked ts0 i ∧
+      is_ready ts0 i ∧
       ts1 = exec_inst i (ts0 with pending_insts updated_by (DELETE) i)
-    ⇒ exec code ts0 ts1) ∧
+    ⇒
+      exec ts0 ts1) ∧
 
   (∀ts0 ts1.
       ¬at_block_end code ts0 ∧
       ts1 = ts0 with <|
               pc updated_by SUC ;
-              pending_insts updated_by (INSERT) (current_inst code ts0) 
+              pending_insts updated_by (INSERT) (current_inst code ts0)
             |>
-    ⇒ exec code ts0 ts1)
+    ⇒
+      exec ts0 ts1) (* ∧
+
+    add a rule to allow blocks to finish and transfer,
+    including:
+      - unconditional branch (tailcall)
+      - tailcalls to other functions
+      - calls
+      - conditional branch (speculating through these will require
+        addition of boolean context information to the frame(?) state
+    *)
+
 `
 
 val paircase_eq = prove(
