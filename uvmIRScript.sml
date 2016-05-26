@@ -397,12 +397,11 @@ val map_terminst_def = Define`
     | ExnInstruction inst rd => ExnInstruction (map_inst f inst) (map_rd rd)
 `
 
-(* Dependency functions: return the dependencies (input variables) for a given
-   expression, instruction, etc.
+(* Given an expression, returns a set of all variables read by the expression
+   (its _input variables_).
 *)
-
-val expr_dependencies_def = Define`
-  expr_dependencies (expr : α expression) : α set =
+val expr_vars_def = Define`
+  expr_vars (expr : α expression) : α set =
     case expr of
     | Binop _ a b => {a; b}
     | Value _ => {}
@@ -422,16 +421,64 @@ val expr_dependencies_def = Define`
     | GetVarPartIref ref => {ref}
 `
 
-val inst_dependencies_def = Define`
-  inst_dependencies (inst : α instruction) : α set =
+(* Given an instruction, returns a pair of sets (input variables, output
+   variables). The union of these sets is the set of all variables referenced
+   by the instruction.
+*)
+val inst_vars_def = Define`
+  inst_vars (inst : α instruction) : α set # α set =
     case inst of
-    | Assign _ e => expr_dependencies e
-    | Load _ _ src _ => {src}
-    | Store src _ _ _ => {src}
-    | CmpXchg _ _ _ _ _ loc exp des => {loc; exp; des}
-    | AtomicRMW _ _ _ _ loc opnd => {loc; opnd}
-    | Fence _ => {}
+    | Assign vs e => expr_vars e, LIST_TO_SET vs
+    | Load v _ src _ => {src}, {v}
+    | Store src _ dst _ => {src}, {dst}
+    | CmpXchg v _ _ _ _ loc exp des => {loc; exp; des}, {v}
+    | AtomicRMW v _ _ _ loc opnd => {loc; opnd}, {v}
+    | Fence _ => {}, {}
 `
+
+val inst_input_vars_def = Define`inst_input_vars i = FST (inst_vars i)`
+
+val inst_output_vars_def = Define`inst_output_vars i = SND (inst_vars i)`
+
+val inst_all_vars_def = Define`inst_all_vars i = let (a, b) = inst_vars i in a ∪ b`
+
+(* Given a terminal instruction, returns a pair of sets (input variables, passed
+   variables). The union of these sets is the set of all variables referenced by
+   the instruction.
+
+   Note that "input variables" are variables whose values are required in order
+   to determine the outcome of the instruction, whereas "passed variables" are
+   variables whose values are passed to another block or function without being
+   read.
+*)
+val terminst_vars_def = Define`
+  terminst_vars (inst : α terminst) : α set # α set =
+    let dest_vars : α destination -> α set =
+      λ(_, args) v. MEM (ExistingVar v) args in
+    let rd_vars : α resumption_data -> α set =
+      λrd. dest_vars rd.normal_dest ∪ dest_vars rd.exceptional_dest in
+    case inst of
+    | Return vals => {}, LIST_TO_SET vals 
+    | ThreadExit => {}, {}
+    | Throw vals => {}, LIST_TO_SET vals
+    | TailCall cd => {cd.methodname}, LIST_TO_SET cd.args
+    | Branch1 dst => {}, dest_vars dst
+    | Branch2 cond dst1 dst2 => {cond}, dest_vars dst1 ∪ dest_vars dst2
+    | Watchpoint NONE rd => {}, rd_vars rd
+    | Watchpoint (SOME (id, dst)) rd => {}, dest_vars dst ∪ rd_vars rd
+    | WPBranch id dst1 dst2 => {}, dest_vars dst1 ∪ dest_vars dst2
+    | Call cd rd => {cd.methodname}, LIST_TO_SET cd.args ∪ rd_vars rd
+    | Swapstack stack_id exc params rd => {stack_id}, LIST_TO_SET params ∪ rd_vars rd
+    | Switch param def_dst branches =>
+        {param}, dest_vars def_dst ∪ λvr. ∃vl. vr ∈ dest_vars (branches ' vl)
+    | ExnInstruction inst rd => inst_input_vars inst, rd_vars rd
+`
+
+val terminst_input_vars_def = Define`terminst_input_vars i = FST (terminst_vars i)`
+
+val terminst_passed_vars_def = Define`terminst_passed_vars i = SND (terminst_vars i)`
+
+val terminst_all_vars_def = Define`terminst_all_vars i = let (a, b) = terminst_vars i in a ∪ b`
 
 (* A basic block (see the spec)
    https://github.com/microvm/microvm-spec/blob/master/uvm-ir.rest#function-body
