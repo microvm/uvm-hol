@@ -5,20 +5,25 @@ open errorMonadTheory
 open lcsymtacs
 open monadsyntax
 
-val _ = new_theory "uvmThreadSemantics";
+val _ = new_theory "uvmThreadSemantics"
+
+val _ = reveal "C" (* The C (flip) combinator is used in this theory *)
+
+val _ = type_abbrev("register", ``:ssavar # num``)
 
 val _ = Datatype`
   fninfo = <|
     start_label : label ;
-    blocks : block_label |-> bblock
+    blocks : block_label |-> ssavar bblock
   |>
 `
 
 val _ = Datatype`
   frame = <|
     fn : fninfo ;
-    ssavars : ssavar |-> value option # memdeps
-  |>`
+    registers : register |-> value
+  |>
+`
 
 val _ = Datatype`
   respt_arg =
@@ -35,189 +40,120 @@ val _ = type_abbrev(
 val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
 val _ = Datatype`
-  running_frame = <| curframe : frame ;
-                     curblock : block_label ;
-                     pc : num |>
-`
-
-val _ = Datatype`
   thread_state = <|
     stack : sus_frame list ;
-    running_frame : running_frame option ;
     tid : tid ;
-    memreq_map : num |-> ssavar ;
+    memreq_map : memreqid |-> register ;
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
     addrwr_map : num |-> addr ;
-    pending_insts : instruction set
-  |>`
-
-(*
- * Gets the current basic block for a given state. Returns an error if the state
- * is malformed (has an invalid function and/or block name).
- *)
-val current_block_def = Define`
-  current_block (state : thread_state) : bblock or_error =
-    do
-      rframe <- expect state.running_frame
-        "thread not running" ;
-      expect (FLOOKUP rframe.curframe.fn.blocks rframe.curblock)
-        ("no block named " ++ rframe.curblock)
-    od
+    pending_insts : register instruction set ;
+    next_register_index : num
+  |>
 `
 
-(* The set of SSA variables in a frame that have values *)
-val defined_vars_def = Define`
-  defined_vars (f : frame) : ssavar set =
-    {v | ∃val md. FLOOKUP f.ssavars v = SOME (SOME val, md)}
+val _ = Datatype`
+  running_thread = <|
+    frame : frame ;
+    block : register bblock ;
+    pc : num ;
+    register_index : num ;
+    state: thread_state
+  |>
 `
 
-(*
- * True if the instruction `i` is executable (all the variables it reads are
- * defined) in the state `state`.
- *)
+(* True if the instruction `i` is executable (all the variables it reads are
+   defined) in the thread `thread`.
+*)
 val is_ready_def = Define`
-  is_ready (state : thread_state) (i : instruction) : bool ⇔
-    read_vars i ⊆ defined_vars state.curframe
+  is_ready (thread : running_thread) (i : register instruction) : bool ⇔
+    inst_input_vars i ⊆ FDOM thread.frame.registers
 `
 
-(*
- * True if the state's program counter is at (or after) the terminal instruction
- * of its current basic block. Returns an error if the state is malformed.
- *)
+(* True if the thread's program counter is at (or after) the terminal instruction
+   of its current basic block.
+*)
 val at_block_end_def = Define`
-  at_block_end (code : fnvname |-> fninfo) (state : thread_state) : bool or_error =
-    do b <- current_block code state; return (LENGTH b.body ≤ state.pc) od
+  at_block_end (thread : running_thread) : bool ⇔
+    LENGTH thread.block.body ≤ thread.pc
 `
 
-(*
- * The current instruction at the state's program counter. Returns an error if
- * the state is malformed or the program counter has reached the end of the
- * block.
- *)
+(* The current instruction at the thread's program counter. Returns an error if
+   the program counter has reached the end of the block.
+*)
 val current_inst_def = Define`
-  current_inst (code : fnvname |-> fninfo) (state : thread_state) : instruction or_error =
-    do
-      at_end <- at_block_end code state ;
-      block <- if at_end
-                 then Error "no current instruction; program counter at end"
-                 else current_block code state ;
-      return (EL state.pc block.body)
-    od
+  current_inst (thread : running_thread) : register instruction or_error =
+    if at_block_end thread
+      then Error "no current instruction; program counter at end"
+      else return (EL thread.pc thread.block.body)
 `
 
-(*
- * Returns the value of an operand in a given state, or an error if the
- * operand's variable is not yet available.
- *)
-val opnd_value_def = Define`
-  opnd_value (state : thread_state) (x : operand) : (value # memdeps) or_error =
+(* Returns the value of a variable or constant in a given frame, or an error if
+   the variable is not yet available in the frame.
+*)
+val get_value_def = Define`
+  get_value (f : frame) (x : register or_const) : value or_error =
     case x of
-    | VarOp ssa => (
-        case FLOOKUP state.curframe.ssavars ssa of
-        | SOME (SOME v, m) => return (v, m)
-        | SOME (NONE, _) => Error ("variable " ++ ssa ++ " not yet available")
-        | NONE => Error ("variable " ++ ssa ++ " does not exist"))
-    | ConstOp v => return (v, {})
+    | INL reg =>
+        expect (FLOOKUP f.registers reg) "register value not yet available"
+    | INR v => return v
 `
 
-(*
- * Evaluates a binary operation, returning the values it produces. Returns an
- * error if the values `v1`, `v2` are incorrectly typed or if the binary
- * operation produces undefined behavior (such as division by zero).
- *)
+(* Evaluates a binary operation, returning the values it produces. Returns an
+   error if the values `v1`, `v2` are incorrectly typed or if the binary
+   operation produces undefined behavior (such as division by zero).
+*)
 val eval_bop_def = Define`
-  eval_bop bop v1 v2 : (value list) or_error =
+  eval_bop bop v1 v2 : value list or_error =
     case bop of
-    | ADD =>
-        do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
-    | SDIV =>
-        do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
+    | ADD => do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
+    | SDIV => do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
 `
 
-(*
- * Evaluates an expression in a given state, returning the values it produces.
- * Returns an error if the expression is ill-typed or if it produces undefined
- * behavior (such as division by zero).
- *)
+(* Evaluates an expression in a given thread, returning the values it produces.
+   Returns an error if the expression is ill-typed or if it produces undefined
+   behavior (such as division by zero).
+*)
 val eval_expr_def = Define`
-  eval_expr (state : thread_state) (e : expression) : ((value list) # memdeps) or_error =
+  eval_expr (f : frame) (e : register or_const expression) : value list or_error =
     case e of
-    | Binop bop v1 v2 =>
+    | Id v => do v' <- get_value f v; return [v'] od
+    | BinOp bop v1 v2 =>
         do
-          (val1, dep1) <- opnd_value state v1 ;
-          (val2, dep2) <- opnd_value state v2 ;
-          v <- eval_bop bop val1 val2 ;
-          return (v, dep1 UNION dep2)
+          v1' <- get_value f v1 ;
+          v2' <- get_value f v2 ;
+          eval_bop bop v1' v2'
         od
-    | Value v => return ([v], {})
 `
 
-
-(* -----------------------------------------------------------------------------
- * TODO: CONTINUE HERE:
- *
- * Consider the following scenario: A loop that sums the contents of an array.
- *
- *     %sum(%array, %len, %i, %n):
- *       %ref    = GETELEMIREF %array %i
- *       %loaded = LOAD %ref
- *       %n2     = ADD %n %loaded
- *       %i2     = ADD %i @const_1
- *       %done   = GE %i %len
- *       BRANCH2 %done %exit(n) %sum(array, len, i2, n2)
- *
- * As this loop runs, it will build up a chain of dependencies, which will
- * contain repeated instances of each SSA variable. It seems like mapping SSA
- * variables to values is not enough. Perhaps a memreq should be generated for
- * every SSA variable?
- *
- * -----------------------------------------------------------------------------
- *)
-
-val enqueue_inst_def = Define`
-  enqueue_inst (state : thread_state) (inst : instruction) : thread_state or_error =
-
+(* Creates a new thread state in which a single register has been assigned a
+   value.
+*)
+val bind_register_def = Define`
+  bind_register : running_thread -> register # value -> running_thread =
+    λt u. t with frame updated_by λf. f with registers updated_by C $|+ u
 `
-
-(*
- * Creates a new thread state in which a single variable has been assigned a new
- * value.
- *)
-val bind_state_var_def = Define`
-  bind_state_var (state : thread_state)
-                 (var : ssavar)
-                 (val : value option)
-                 (deps : memdeps)
-                 : thread_state or_error =
-    state with
-    if LENGTH vars ≠ LENGTH values ∨ ¬ALL_DISTINCT vars then TSDIE
-    else do
-      ts0 <- TSGET ;
-      TSASSERT (EVERY (λv. v ∉ FDOM ts0.curframe.ssavars) vars) ;
-      TSSET (FOLDL (λts (var,value).
-                      ts with curframe updated_by
-                        (λcf.
-                           cf with ssavars updated_by
-                             (λfm. fm |+ (var, (SOME value,dep) ))))
-                   ts0
-                   (ZIP(vars,values)))
-    od
-`;
 
 val exec_inst_def = Define`
-  exec_inst (inst : instruction) (state : thread_state) : thread_state or_error =
+  exec_inst (thread : running_thread)
+            (inst : instruction)
+            : running_thread or_error =
+    let valbind : register list -> value list -> running_thread or_error =
+      return o FOLDL (C bind_register) thread o CURRY ZIP in
     case inst of
-    | Assign vtuple exp =>
+    | Assign regs expr =>
         do
-           values <- eval_exp exp ;
-           valbind vtuple values
+          values <- eval_expr thread.frame exp ;
+          valbind regs values
         od
-    | Load destvar isiref srcvar morder =>
+    | Load destvar is_iref src mem_order =>
         do
-           (av, depa) <- read_var srcvar ;
-           a <- opt_lift (value_to_address av) ;
-           TSLOAD destvar (a,depa) morder
+          iref <- get_value thread.frame src ;
+          addr <- expect (value_to_address iref) "invalid iref" ;
+          return (thread with state updated_by λs. s with <|
+              (* TODO: Continue here. *)
+            |>)
+          TSLOAD destvar (a,depa) morder
         od
     | Store srcvar isiref destvar morder =>
         do
@@ -231,6 +167,69 @@ val exec_inst_def = Define`
             (λts. Success((),ts,[Fence morder]))
         od*)
      (*| AtomicRMW opr destloc srcvar isiref morder => *)
+`
+
+(* Resumes a suspended `thread_state`, converting it into a `running_thread`
+   whose execution starts at the top frame of the suspended thread's stack.
+   Returns an error if the suspended thread has an empty stack, or if its stack
+   refers to a nonexistent bblock.
+*)
+val resume_thread_def = Define`
+  resume_thread (state : thread_state)
+                (resumer_vars : register or_const list)
+                : running_thread or_error =
+    do
+      (* 1. Pop the next frame off of the stack. *)
+      (* TODO: What is the second value of a respt_pair for? *)
+      ((fr, ((label, res_args), _)), stack) <-
+        case state.stack of
+        | hd::tl => return (hd, tl)
+        | NIL => Error "stack underflow" ;
+
+      (* 2. Look up the block that the frame refers to. *)
+      block <- expect (FLOOKUP fr.fn.blocks label) ("no block named " ++ label);
+
+      (* 3. Convert the block's SSA variables into registers. *)
+      let new_block : register bblock =
+        let reg = λv. v, state.next_register_index in
+        <|
+          args := MAP (reg ## I) block.args ;
+          body := MAP (map_inst reg) block.body ;
+          exit := map_terminst reg block.exit ;
+          keepalives := MAP reg block.keepalives
+        |> in
+
+      (* 4. Add the resumption point arguments to the state. Constant values
+            are inserted directly into thread.frame.registers, while passed
+            variables are converted into pending Assign instructions.
+      *)
+      let (new_registers, new_pending)
+          : (register |-> value) # register instruction set = (
+        MAP2 (λ(var, _) arg.
+          case arg of
+          | RPVal val => [var, val], [] (* The comma is intentional *)
+          | ResumerArg n => (
+              case EL n resumer_vars of
+              | INL orig => [], [Assign [var] (Id (INL orig))]
+              | INR val => [var, val], [])
+        ) new_block.args res_args
+        :> UNZIP
+        :> FLAT ## FLAT
+        :> FOLDR (C FUPDATE) FEMPTY ## set) in
+
+      (* 5. Construct a new running_thread record for the new state. *)
+      return <|
+          frame := fr with registers updated_by FUNION new_registers ;
+          block := new_block ;
+          pc := 0 ;
+          register_index := state.next_register_index ;
+          state := state with <|
+            stack := stack ;
+            pending_insts updated_by $UNION new_pending;
+            next_register_index updated_by SUC
+          |>
+        |>
+    od
 `
 
 val (exec_rules, exec_ind, exec_cases) = Hol_reln`
@@ -259,38 +258,6 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
         addition of boolean context information to the frame(?) state
     *)
 
-`
-
-val paircase_eq = prove(
-  ``(pair_CASE x f = y) ⇔ ∃a b. (x = (a,b)) ∧ (f a b = y)``,
-  Cases_on `x` >> simp[]);
-
-val exec_inst_def = Define`
-  exec_inst inst : unit TSM =
-    case inst of
-    | Assign vtuple exp =>
-        do
-           values <- eval_exp exp ;
-           valbind vtuple values
-        od
-    | Load destvar isiref srcvar morder =>
-        do
-           (av, depa) <- read_var srcvar ;
-           a <- opt_lift (value_to_address av) ;
-           TSLOAD destvar (a,depa) morder
-        od
-    | Store srcvar isiref destvar morder =>
-        do
-           (v,depv) <- read_var srcvar ;
-           (av,depa) <- read_var destvar ;
-           a <- opt_lift (value_to_address av) ;
-           TSSTORE (v,depv) (a,depa) morder
-        od
-(*    | Fence morder =>
-        do
-            (λts. Success((),ts,[Fence morder]))
-        od*)
-     (*| AtomicRMW opr destloc srcvar isiref morder => *)
 `
 
 val thread_receive_def = Define`
