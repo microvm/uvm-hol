@@ -134,12 +134,16 @@ val bind_register_def = Define`
     λt u. t with frame updated_by λf. f with registers updated_by C $|+ u
 `
 
+(* Generates a new running_thread state and a set of memory messages by
+   executing an instruction. Note that this does *not* advance the program
+   counter, as it may represent the execution of a queued instruction.
+*)
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
-            (inst : instruction)
-            : running_thread or_error =
-    let valbind : register list -> value list -> running_thread or_error =
-      return o FOLDL (C bind_register) thread o CURRY ZIP in
+            (inst : register instruction)
+            : (running_thread + (memreqid -> running_thread # memory_message)) or_error =
+    let valbind : register list -> value list -> (running_thread + α) or_error =
+      return o INL o FOLDL (C bind_register) thread o CURRY ZIP in 
     case inst of
     | Assign regs expr =>
         do
@@ -149,24 +153,28 @@ val exec_inst_def = Define`
     | Load destvar is_iref src mem_order =>
         do
           iref <- get_value thread.frame src ;
-          addr <- expect (value_to_address iref) "invalid iref" ;
-          return (thread with state updated_by λs. s with <|
-              (* TODO: Continue here. *)
-            |>)
-          TSLOAD destvar (a,depa) morder
+          a <- expect (value_to_address iref) "invalid iref" ;
+          return (INR λid.
+            (thread with state updated_by λs.
+              s with memreq_map updated_by C $|+ (id, destvar)),
+            Read a id mem_order [])
         od
-    | Store srcvar isiref destvar morder =>
+    | Store srcvar is_iref destvar mem_order =>
         do
-           (v,depv) <- read_var srcvar ;
-           (av,depa) <- read_var destvar ;
-           a <- opt_lift (value_to_address av) ;
-           TSSTORE (v,depv) (a,depa) morder
+          src_value <- get_value thread.frame srcvar ;
+          dest_iref <- get_value thread.frame destvar ;
+          a <- expect (value_to_address iref) "invalid iref" ;
+          return (INR λid. thread, Write a id mem_order src_value [])
         od
-(*    | Fence morder =>
-        do
-            (λts. Success((),ts,[Fence morder]))
-        od*)
-     (*| AtomicRMW opr destloc srcvar isiref morder => *)
+    | Fence mem_order =>
+        return (INR λ_. thread, MMFence mem_order)
+
+    (*| AtomicRMW opr destloc srcvar isiref morder => *)
+
+    (* TODO: What type should this return? AtomicRMW, CmpXchg, etc. will
+       generate more than one memory_message. Maybe a monad will be necessary?
+       Or steps should only occur at the VM level, not the thread level?
+    *)
 `
 
 (* Resumes a suspended `thread_state`, converting it into a `running_thread`
@@ -261,14 +269,16 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
 `
 
 val thread_receive_def = Define`
-  thread_receive ts ms =
+  thread_receive (thread : running_thread)
+                 (ms : memory_message_resolve)
+                 : running_thread or_error =
     case ms of
     | ResolvedRead v mid =>
-        let var = ts.memreq_map ' mid in
-        let deps = SND ((ts.curframe.ssavars) ' var) in
-        let cf = ts.curframe with ssavars updated_by (λvars. FUPDATE vars (var, (SOME v,deps))) in
-        let ts1 = ts with curframe updated_by (λcfs. cf) in
-        ts1
+        do
+          var <- expect (FLOOKUP thread.state.memreq_map mid) "invalid memreqid" ;
+          return (thread with frame updated_by λf.
+            f with registers updated_by C FUPDATE (var, v))
+        od
 `;
 
 (* Test:
