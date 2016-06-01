@@ -141,9 +141,9 @@ val bind_register_def = Define`
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
             (inst : register instruction)
-            : (running_thread + (memreqid -> running_thread # memory_message)) or_error =
-    let valbind : register list -> value list -> (running_thread + α) or_error =
-      return o INL o FOLDL (C bind_register) thread o CURRY ZIP in 
+            : (running_thread # memory_message list) or_error =
+    let valbind : register list -> value list -> running_thread or_error =
+      return o FOLDL (C bind_register) thread o CURRY ZIP in
     case inst of
     | Assign regs expr =>
         do
@@ -169,7 +169,7 @@ val exec_inst_def = Define`
     | Fence mem_order =>
         return (INR λ_. thread, MMFence mem_order)
 
-    (*| AtomicRMW opr destloc srcvar isiref morder => *)
+    | AtomicRMW destvar isiref morder opn memloc opnd =>
 
     (* TODO: What type should this return? AtomicRMW, CmpXchg, etc. will
        generate more than one memory_message. Maybe a monad will be necessary?
@@ -184,22 +184,29 @@ val exec_inst_def = Define`
 *)
 val resume_thread_def = Define`
   resume_thread (state : thread_state)
+                (normal : bool) (* F if handling an exception *)
                 (resumer_vars : register or_const list)
                 : running_thread or_error =
     do
       (* 1. Pop the next frame off of the stack. *)
       (* TODO: What is the second value of a respt_pair for? *)
-      ((fr, ((label, res_args), _)), stack) <-
+      ((fr, respt_pair), stack) <-
         case state.stack of
         | hd::tl => return (hd, tl)
         | NIL => Error "stack underflow" ;
 
+      (label, res_args) <- if normal then return (FST res_args)
+                           else expect (SND res_args)
+                                       "No exception resumption possible";
+
       (* 2. Look up the block that the frame refers to. *)
       block <- expect (FLOOKUP fr.fn.blocks label) ("no block named " ++ label);
 
+      (* TODO: assert that arguments and parameters have same length *)
+
       (* 3. Convert the block's SSA variables into registers. *)
       let new_block : register bblock =
-        let reg = λv. v, state.next_register_index in
+        let reg = λv. (v, state.next_register_index) in
         <|
           args := MAP (reg ## I) block.args ;
           body := MAP (map_inst reg) block.body ;
@@ -211,15 +218,19 @@ val resume_thread_def = Define`
             are inserted directly into thread.frame.registers, while passed
             variables are converted into pending Assign instructions.
       *)
+
+      (* TODO: map all of the parameter assignments into Assign instructions
+         uniformly; should remove complexity *)
       let (new_registers, new_pending)
           : (register |-> value) # register instruction set = (
         MAP2 (λ(var, _) arg.
           case arg of
-          | RPVal val => [var, val], [] (* The comma is intentional *)
+          | RPVal val => ([(var, val)], [])
           | ResumerArg n => (
               case EL n resumer_vars of
-              | INL orig => [], [Assign [var] (Id (INL orig))]
-              | INR val => [var, val], [])
+              | INL orig => ([], [Assign [var] (Id (INL orig))])
+              | INR val => ([(var, val)], [])
+            )
         ) new_block.args res_args
         :> UNZIP
         :> FLAT ## FLAT
@@ -227,7 +238,7 @@ val resume_thread_def = Define`
 
       (* 5. Construct a new running_thread record for the new state. *)
       return <|
-          frame := fr with registers updated_by FUNION new_registers ;
+          frame := fr with registers updated_by (FUNION new_registers) ;
           block := new_block ;
           pc := 0 ;
           register_index := state.next_register_index ;
@@ -238,34 +249,6 @@ val resume_thread_def = Define`
           |>
         |>
     od
-`
-
-val (exec_rules, exec_ind, exec_cases) = Hol_reln`
-  (∀ts0 ts1 i.
-      i ∈ ts0.pending_insts ∧
-      is_ready ts0 i ∧
-      ts1 = exec_inst i (ts0 with pending_insts updated_by (DELETE) i)
-    ⇒
-      exec ts0 ts1) ∧
-
-  (∀ts0 ts1.
-      ¬at_block_end code ts0 ∧
-      ts1 = ts0 with <|
-              pc updated_by SUC ;
-              pending_insts updated_by (INSERT) (current_inst code ts0)
-            |>
-    ⇒
-      exec ts0 ts1) (* ∧
-
-    add a rule to allow blocks to finish and transfer,
-    including:
-      - unconditional branch (tailcall)
-      - tailcalls to other functions
-      - calls
-      - conditional branch (speculating through these will require
-        addition of boolean context information to the frame(?) state
-    *)
-
 `
 
 val thread_receive_def = Define`
@@ -280,6 +263,82 @@ val thread_receive_def = Define`
             f with registers updated_by C FUPDATE (var, v))
         od
 `;
+
+val (exec_rules, exec_ind, exec_cases) = Hol_reln`
+  (∀ts0 ts1 i.
+      i ∈ ts0.pending_insts ∧
+      is_ready ts0 i ∧
+    ⇒
+      exec ts0
+           (OK (exec_inst i (ts0 with pending_insts updated_by (DELETE) i))))
+
+   ∧
+
+   (∀ts0 ts1.
+      ¬at_block_end code ts0 ∧
+      ts1 = ts0 with <|
+              pc updated_by SUC ;
+              pending_insts updated_by (INSERT) (current_inst code ts0)
+            |>
+    ⇒
+      exec ts0 (OK (ts1, []))) ∧
+
+  (∀ts0 msg.
+      msg ∈ ts0.mailbox
+    ⇒
+      exec ts0 (map_error (λts. (ts with mailbox updated_by (DELETE) msg, []))
+                          (thread_receive msg ts0)))
+
+ (* ∧
+
+    add a rule to allow blocks to finish and transfer,
+    including:
+      - unconditional branch (tailcall)
+      - tailcalls to other functions
+      - calls
+      - conditional branch (speculating through these will require
+        addition of boolean context information to the frame(?) state
+    *)
+`
+
+(*
+exec_cases is of form:
+
+  exec ts0 ts1 ⇔
+     (∃i. i ∈ ts0.pending_insts ∧ .... ∧
+
+          ts1 = OK (exec_inst i ....)) ∨
+
+     (¬at_block_end ts0 ... /\ ts1 = ...) ∨
+
+
+Then you can "evaluate" a concrete example by writing something like
+
+   val th = ONCE_REWRITE_CONV [exec_cases] ``exec concrete_example tsresult``
+
+this generates a theorem th of the form
+
+   exec concrete_example tsresult ⇔
+      clause1' ∨ clause2' ∨ ...
+
+where each clausei' is a substitution instance of the original rules.
+
+Then you need to simplify away clauses that don't apply.
+
+  val th2 = SIMP_RULE (srw_ss()) [] th
+
+will handle all the built-in constants nicely.  If you have constants with definitions that you want expanded, (foo_def, say), put those definitions/theorems into the list, i.e.
+
+  val th2' = SIMP_RULE (srw_ss()) [foo_def] th
+
+To get term corresponding to RHS of theorem, write
+
+  val t2 = rhs (concl th2')
+
+which will be a disjunction of possible clauses.
+
+*)
+
 
 (* Test:
 
