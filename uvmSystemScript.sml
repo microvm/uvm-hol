@@ -12,7 +12,7 @@ val _ = new_theory "uvmSystem";
 val machine_state_def = Datatype`
    machine_state = <|
      g : graph;
-     ts_list : thread_state list
+     threads : running_thread list
    |>
 `;
 
@@ -88,7 +88,7 @@ val find_node_def = Define`
 
 val resolveM_def = Define`
   resolveM R W : memory_message_resolve MSM =
-    λms. SuccessM(ResolvedRead (THE W.values) R.mid, ms with g updated_by (λgr. gr with rf updated_by (λr. r|+(R,W))))
+    λms. SuccessM(ResolvedLoad (THE W.values) R.mid, ms with g updated_by (λgr. gr with rf updated_by (λr. r|+(R,W))))
 `;
 
 val list_update_def = Define`
@@ -100,7 +100,7 @@ val list_update_def = Define`
 
 val thread_receiveM_def = Define`
   thread_receiveM msg tid : unit MSM =
-    λms. SuccessM ((),  <| g := ms.g ; ts_list := list_update ms.ts_list tid (thread_receive (EL tid ms.ts_list) msg) |>)
+    λms. SuccessM ((),  <| g := ms.g ; threads := list_update ms.threads tid (thread_receive (EL tid ms.threads) msg) |>)
 `;
 
 
@@ -114,13 +114,13 @@ val run_inst_def = Define`
   run_inst inst t1 : (memory_message list) MSM = 
     do
       ms0 <- MSGET ;
-      (a,ts1,msg) <- get_result (exec_inst inst (EL t1 ms0.ts_list)) ;
-      λms. SuccessM ( msg, <| g:= ms.g ; ts_list := list_update ms.ts_list t1 ts1 |>)
+      (a,ts1,msg) <- get_result (exec_inst inst (EL t1 ms0.threads)) ;
+      λms. SuccessM ( msg, <| g:= ms.g ; threads := list_update ms.threads t1 ts1 |>)
     od
 `;
 
-type_of(``get_result(exec_inst inst (EL t1 ms.ts_list))``);
-type_of(``SuccessM ( msg, <| g:= ms.g ; ts_list := list_update ms.ts_list t1 ts1 |>)``);
+type_of(``get_result(exec_inst inst (EL t1 ms.threads))``);
+type_of(``SuccessM ( msg, <| g:= ms.g ; threads := list_update ms.threads t1 ts1 |>)``);
 
 val receiveH_def = Define`
   receiveH inGraph (msg,ttid) =
@@ -152,7 +152,7 @@ val receive_list_def = Define`
 
 val receiveM_def = Define`
   receiveM messages tid : unit MSM =
-    λms. SuccessM ((), <| g := receive_list ms.g (messages,tid) ; ts_list := ms.ts_list |>)
+    λms. SuccessM ((), <| g := receive_list ms.g (messages,tid) ; threads := ms.threads |>)
 `;
 
 

@@ -140,6 +140,8 @@ val _ = type_abbrev("label", ``:string``)
 
 (* Either a variable or a constant *)
 val _ = type_abbrev("or_const", ``:α + value``)
+val _ = overload_on("Var", ``INL : α -> α or_const``)
+val _ = overload_on("Const", ``INR : value -> α or_const``)
 
 val _ = Datatype`
   destarg =

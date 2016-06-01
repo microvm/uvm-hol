@@ -28,12 +28,28 @@ val or_error_bind_def = Define`
     | Error s => Error s
 `
 
+(* The `map` operation for `or_error` *)
+val map_error_def = Define`
+  map_error (f : α -> β) (x : α or_error) : β or_error =
+    case x of
+    | OK y => OK (f y)
+    | Error s => Error s
+`
+
 (* Overload the default monad functions, making `or_error` usable with
    do-notation.
 *)
 val _ = overload_on ("return", ``or_error_return``)
 val _ = overload_on ("monad_bind", ``or_error_bind``)
 val _ = overload_on ("monad_unitbind", ``λm1 m2. or_error_bind m1 (K m2)``)
+
+(* `assert cond msg` asserts that `cond` is true, returning an error with the
+   associated message if it isn't.
+*)
+val assert_def = Define`
+  assert (cond : bool) (msg : string) : one or_error =
+    if cond then OK () else Error msg
+`
 
 (* `expect opt msg` converts the `α option` `opt` into an `α or_error`, using
    the error message `msg` if `NONE` is encountered.

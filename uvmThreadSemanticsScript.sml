@@ -25,15 +25,10 @@ val _ = Datatype`
   |>
 `
 
-val _ = Datatype`
-  respt_arg =
-  | RPVal value    (* values already computed in resumee's context *)
-  | ResumerArg num (* index into values from resumer *)
-`
-
 val _ = type_abbrev(
-  "resumption_point", ``:block_label # respt_arg list``)
+  "resumption_point", ``:block_label # register or_const list``)
 
+(* Normal and exceptional resumption points *)
 val _ = type_abbrev(
   "respt_pair", ``:resumption_point # resumption_point option``)
 
@@ -152,7 +147,7 @@ val exec_inst_def = Define`
         od
     | Load destvar is_iref src mem_order =>
         do
-          iref <- get_value thread.frame (INL src) ;
+          iref <- get_value thread.frame (Var src) ;
           a <- expect (value_to_address iref) "invalid iref" ;
           return (
             thread with state updated_by
@@ -168,7 +163,7 @@ val exec_inst_def = Define`
     | Store srcvar is_iref destvar mem_order =>
         do
           src_value <- get_value thread.frame srcvar ;
-          dest_iref <- get_value thread.frame (INL destvar) ;
+          dest_iref <- get_value thread.frame (Var destvar) ;
           a <- expect (value_to_address dest_iref) "invalid iref" ;
           return (
             thread with state updated_by
@@ -180,7 +175,7 @@ val exec_inst_def = Define`
         od
     | CmpXchg v1 v2 is_iref is_strong success_order failure_order loc exp des =>
         do
-          loc_iref <- get_value thread.frame (INL loc) ;
+          loc_iref <- get_value thread.frame (Var loc) ;
           exp_value <- get_value thread.frame exp ;
           des_value <- get_value thread.frame des ;
           a <- expect (value_to_address loc_iref) "invalid iref" ;
@@ -200,7 +195,7 @@ val exec_inst_def = Define`
         od
     | AtomicRMW destvar is_iref mem_order op loc opnd =>
         do
-          loc_iref <- get_value thread.frame (INL loc) ;
+          loc_iref <- get_value thread.frame (Var loc) ;
           opnd_value <- get_value thread.frame opnd ;
           a <- expect (value_to_address loc_iref) "invalid iref" ;
           return (
@@ -225,24 +220,21 @@ val exec_inst_def = Define`
 val resume_thread_def = Define`
   resume_thread (state : thread_state)
                 (normal : bool) (* F if handling an exception *)
-                (resumer_vars : register or_const list)
                 : running_thread or_error =
     do
       (* 1. Pop the next frame off of the stack. *)
-      (* TODO: What is the second value of a respt_pair for? *)
-      ((fr, respt_pair), stack) <-
+      ((fr, respts), stack) <-
         case state.stack of
-        | hd::tl => return (hd, tl)
+        | next_sus_fr::rest => return (next_sus_fr, rest)
         | NIL => Error "stack underflow" ;
 
-      (label, res_args) <- if normal then return (FST res_args)
-                           else expect (SND res_args)
-                                       "No exception resumption possible";
+      (label, res_args) <- 
+        if normal then return (FST respts)
+                  else expect (SND respts) "no exceptional resumption point" ;
 
       (* 2. Look up the block that the frame refers to. *)
       block <- expect (FLOOKUP fr.fn.blocks label) ("no block named " ++ label);
-
-      (* TODO: assert that arguments and parameters have same length *)
+      assert (LEN res_args = LEN block.args) "block arity mismatch" ;
 
       (* 3. Convert the block's SSA variables into registers. *)
       let new_block : register bblock =
@@ -258,23 +250,13 @@ val resume_thread_def = Define`
             are inserted directly into thread.frame.registers, while passed
             variables are converted into pending Assign instructions.
       *)
-
-      (* TODO: map all of the parameter assignments into Assign instructions
-         uniformly; should remove complexity *)
       let (new_registers, new_pending)
-          : (register |-> value) # register instruction set = (
-        MAP2 (λ(var, _) arg.
+          : (register |-> value) # register instruction set =
+        FOLDR (λ((var, _), arg).
           case arg of
-          | RPVal val => ([(var, val)], [])
-          | ResumerArg n => (
-              case EL n resumer_vars of
-              | INL orig => ([], [Assign [var] (Id (INL orig))])
-              | INR val => ([(var, val)], [])
-            )
-        ) new_block.args res_args
-        :> UNZIP
-        :> FLAT ## FLAT
-        :> FOLDR (C FUPDATE) FEMPTY ## set) in
+          | Var var' => I ## $INSERT (Assign [var] (Id (Var var')))
+          | Const val => C $|+ (var, val) ## I
+        ) (FEMPTY, {}) (ZIP (new_block.args, res_args)) in
 
       (* 5. Construct a new running_thread record for the new state. *)
       return <|
@@ -305,33 +287,35 @@ val thread_receive_def = Define`
 `;
 
 val (exec_rules, exec_ind, exec_cases) = Hol_reln`
-  (∀ts0 ts1 i.
-      i ∈ ts0.pending_insts ∧
-      is_ready ts0 i ∧
+  (∀thread inst.
+      inst ∈ ts0.state.pending_insts
+      ∧ is_ready thread inst
     ⇒
-      exec ts0
-           (OK (exec_inst i (ts0 with pending_insts updated_by (DELETE) i))))
+      exec thread
+           (exec_inst (thread with state updated_by λs.
+                         s with pending_insts updated_by C $DELETE inst)
+                      inst))
 
-   ∧
-
-   (∀ts0 ts1.
-      ¬at_block_end code ts0 ∧
-      ts1 = ts0 with <|
-              pc updated_by SUC ;
-              pending_insts updated_by (INSERT) (current_inst code ts0)
-            |>
+  ∧ (∀thread thread' inst.
+      ¬at_block_end thread
+      ∧ OK inst = current_inst thread
+      ∧ thread' = thread with <|
+          pc updated_by SUC ;
+          state updated_by λs. (s with pending_insts updated_by $INSERT inst)
+        |>
     ⇒
-      exec ts0 (OK (ts1, NONE))) ∧
+      exec thread (OK (thread', NONE)))
 
-  (∀ts0 msg.
-      msg ∈ ts0.state.mailbox
+  ∧ (∀thread msg.
+      msg ∈ thread.state.mailbox
     ⇒
-      exec ts0 (map_error (λts. (ts with state updated_by (λs.
-                                   s with mailbox updated_by (DELETE) msg), []))
-                          (thread_receive msg ts0)))
+      exec thread (map_error
+        (λt. (t with state updated_by (λs.
+                s with mailbox updated_by C $DELETE msg),
+             NONE))
+        (thread_receive thread msg)))
 
- (* ∧
-
+  (*
     add a rule to allow blocks to finish and transfer,
     including:
       - unconditional branch (tailcall)
@@ -339,7 +323,7 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
       - calls
       - conditional branch (speculating through these will require
         addition of boolean context information to the frame(?) state
-    *)
+  *)
 `
 
 (*
@@ -446,20 +430,6 @@ EVAL ``do
        od ts``
 
 EVAL ``ts2``;
-
-*)
-
-
-(*
-val ts_step_def = Define`
-  ts_step codemap (ts0 : thread_state) : tsstep_result =
-    case FLOOKUP ts0.curframe.code ts0.curblock of
-      NONE => Abort
-    | SOME bb =>
-      if ts0.pc > LENGTH bb.body then Abort
-      else if ts0.pc = LENGTH bb.body then exec_terminst ts0 bb.exit
-      else exec_inst ts0 (EL ts0.pc bb.body)
-`;
 
 *)
 
