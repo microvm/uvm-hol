@@ -266,7 +266,8 @@ val _ = Datatype`
           bool (* T for iref, F for ptr *)
           α (* destination memory address *)
           memory_order
-  | CmpXchg α (* output: pair (oldvalue, boolean (T = success, F = failure)) *)
+  | CmpXchg α (* output1 : oldvalue *)
+            α (* output2 : boolean for whether compare succeeded *)
             bool (* T for iref, F for ptr *)
             bool (* T for strong, F for weak *)
             memory_order (* success order *)
