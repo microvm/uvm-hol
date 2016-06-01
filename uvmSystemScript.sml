@@ -125,20 +125,20 @@ type_of(``SuccessM ( msg, <| g:= ms.g ; ts_list := list_update ms.ts_list t1 ts1
 val receiveH_def = Define`
   receiveH inGraph (msg,ttid) =
     case msg of
-    | Read a' id order' dep =>
+    | MemLoad load =>
         let new_node = <|
               operation := Rd ;
-              address := a'   ; values := NONE    ;
-              mid := id       ; thread_id := ttid ;
-              order := order' ; ddeps := dep
+              address := load.addr ; values := NONE    ;
+              mid := load.id       ; thread_id := ttid ;
+              order := load.order  ; ddeps := load.memdeps
             |>
         in inGraph with nodes updated_by (λlst. lst ++ [new_node])
-    | Write a' id vl order' dep =>
+    | MemStore store =>
         let new_node = <|
               operation := Wr ;
-              address := a'   ; values := SOME vl ;
-              mid := id       ; thread_id := ttid ;
-              order := order' ; ddeps := dep
+              address := load.addr ; values := SOME load.value ;
+              mid := load.id       ; thread_id := ttid ;
+              order := load.order  ; ddeps := load.memdeps
             |>
         in inGraph with nodes updated_by (λlst. lst ++ [new_node])
 `;

@@ -391,8 +391,8 @@ val map_inst_def = Define`
     | Assign v e => Assign (MAP f v) (map_expr (map_left f) e)
     | Load v ptr src ord => Load (f v) ptr (f src) ord
     | Store src ptr dst ord => Store (map_left f src) ptr (f dst) ord
-    | CmpXchg v ptr weak sord ford loc exp des =>
-        CmpXchg (f v) ptr weak sord ford (f loc) (map_left f exp) (map_left f des)
+    | CmpXchg v1 v2 ptr weak sord ford loc exp des =>
+        CmpXchg (f v1) (f v2) ptr weak sord ford (f loc) (map_left f exp) (map_left f des)
     | AtomicRMW v ptr ord op loc opnd =>
         AtomicRMW (f v) ptr ord op (f loc) (map_left f opnd)
     | Fence ord => Fence ord
@@ -464,8 +464,8 @@ val inst_vars_def = Define`
     | Assign vs e => expr_vars e :> IMAGE left_set :> BIGUNION, set vs
     | Load v _ src _ => {src}, {v}
     | Store src _ dst _ => left_set src, {dst}
-    | CmpXchg v _ _ _ _ loc exp des =>
-        {loc} ∪ left_set exp ∪ left_set des, {v}
+    | CmpXchg v1 v2 _ _ _ _ loc exp des =>
+        {loc} ∪ left_set exp ∪ left_set des, {v1; v2}
     | AtomicRMW v _ _ _ loc opnd => {loc} ∪ left_set opnd, {v}
     | Fence _ => {}, {}
 `
@@ -542,15 +542,65 @@ val _ = type_abbrev("tid", ``:num``)
 val _ = type_abbrev("memreqid", ``:num``)
 val _ = type_abbrev("memdeps", ``:memreqid set``)
 
+(* `memory_message` is the type of memory mutation actions waiting to be
+   performed. Because most of the messages have complicated argument lists,
+   their arguments are defined as records first.
+*)
+val memory_message_load_args_def = Datatype`
+  memory_message_load_args = <|
+    addr: addr ;
+    id : memreqid ;
+    order : memory_order ;
+    memdeps : memdeps
+  |>
+`
+
+val memory_message_store_args_def = Datatype`
+  memory_message_store_args = <|
+    addr: addr ;
+    value : value ;
+    id : memreqid ;
+    order : memory_order ;
+    memdeps : memdeps
+  |>
+`
+
+val memory_message_cmp_xchg_args_def = Datatype`
+  memory_message_cmp_xchg_args = <|
+    addr : addr ;
+    id : memreqid ;
+    is_strong : bool ;
+    success_order : memory_order ;
+    failure_order : memory_order ;
+    expected : value ;
+    desired : value ;
+    memdeps : memdeps
+  |>
+`
+
+val memory_message_atomic_rmw_args_def = Datatype`
+  memory_message_atomic_rmw_args = <|
+    addr : addr ;
+    id : memreqid ;
+    order : memory_order ;
+    op : atomicrmw_op ;
+    opnd : value ;
+    memdeps : memdeps
+  |>
+`
+
 val memory_message_def = Datatype`
   memory_message =
-  | Read  addr memreqid       memory_order memdeps
-  | Write addr memreqid value memory_order memdeps
-  | MMFence                   memory_order
-`;
+  | MemLoad memory_message_load_args
+  | MemStore memory_message_store_args
+  | MemCmpXchg memory_message_cmp_xchg_args
+  | MemAtomicRMW memory_message_atomic_rmw_args
+  | MemFence memory_order
+`
 
 val memory_message_resolve_def = Datatype`
   memory_message_resolve =
-  | ResolvedRead value memreqid`;
+  | ResolvedLoad value memreqid`;
 
 val _ = export_theory();
+

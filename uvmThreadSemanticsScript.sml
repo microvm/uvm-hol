@@ -48,7 +48,9 @@ val _ = Datatype`
          the value from memory *)
     addrwr_map : num |-> addr ;
     pending_insts : register instruction set ;
-    next_register_index : num
+    mailbox : memory_message_resolve set ;
+    next_register_index : num ;
+    next_memreqid : memreqid
   |>
 `
 
@@ -141,40 +143,78 @@ val bind_register_def = Define`
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
             (inst : register instruction)
-            : (running_thread # memory_message list) or_error =
-    let valbind : register list -> value list -> running_thread or_error =
-      return o FOLDL (C bind_register) thread o CURRY ZIP in
+            : (running_thread # memory_message option) or_error =
     case inst of
     | Assign regs expr =>
         do
-          values <- eval_expr thread.frame exp ;
-          valbind regs values
+          values <- eval_expr thread.frame expr ;
+          return (FOLDL bind_register thread (ZIP (regs, values)), NONE)
         od
     | Load destvar is_iref src mem_order =>
         do
-          iref <- get_value thread.frame src ;
+          iref <- get_value thread.frame (INL src) ;
           a <- expect (value_to_address iref) "invalid iref" ;
-          return (INR λid.
-            (thread with state updated_by λs.
-              s with memreq_map updated_by C $|+ (id, destvar)),
-            Read a id mem_order [])
+          return (
+            thread with state updated_by
+              (λs. s with <|
+                memreq_map updated_by C FUPDATE (s.next_memreqid, destvar);
+                next_memreqid updated_by SUC
+              |>),
+            SOME (MemLoad <|
+              addr := a; id := thread.state.next_memreqid;
+              order := mem_order; memdeps := {}
+            |>))
         od
     | Store srcvar is_iref destvar mem_order =>
         do
           src_value <- get_value thread.frame srcvar ;
-          dest_iref <- get_value thread.frame destvar ;
-          a <- expect (value_to_address iref) "invalid iref" ;
-          return (INR λid. thread, Write a id mem_order src_value [])
+          dest_iref <- get_value thread.frame (INL destvar) ;
+          a <- expect (value_to_address dest_iref) "invalid iref" ;
+          return (
+            thread with state updated_by
+              (λs. s with next_memreqid updated_by SUC),
+            SOME (MemStore <|
+              addr := a; id := thread.state.next_memreqid;
+              value := src_value; order := mem_order; memdeps := {}
+            |>))
         od
-    | Fence mem_order =>
-        return (INR λ_. thread, MMFence mem_order)
-
-    | AtomicRMW destvar isiref morder opn memloc opnd =>
-
-    (* TODO: What type should this return? AtomicRMW, CmpXchg, etc. will
-       generate more than one memory_message. Maybe a monad will be necessary?
-       Or steps should only occur at the VM level, not the thread level?
-    *)
+    | CmpXchg v1 v2 is_iref is_strong success_order failure_order loc exp des =>
+        do
+          loc_iref <- get_value thread.frame (INL loc) ;
+          exp_value <- get_value thread.frame exp ;
+          des_value <- get_value thread.frame des ;
+          a <- expect (value_to_address loc_iref) "invalid iref" ;
+          return (
+            thread with state updated_by
+              (λs. s with <|
+                memreq_map updated_by C $|++
+                  [(s.next_memreqid, v1); (s.next_memreqid, v2)];
+                next_memreqid updated_by SUC
+              |>),
+            SOME (MemCmpXchg <|
+              addr := a; id := thread.state.next_memreqid;
+              expected := exp_value; desired := des_value;
+              success_order := success_order; failure_order := failure_order;
+              is_strong := is_strong; memdeps := {}
+            |>))
+        od
+    | AtomicRMW destvar is_iref mem_order op loc opnd =>
+        do
+          loc_iref <- get_value thread.frame (INL loc) ;
+          opnd_value <- get_value thread.frame opnd ;
+          a <- expect (value_to_address loc_iref) "invalid iref" ;
+          return (
+            thread with state updated_by
+              (λs. s with <|
+                memreq_map updated_by C FUPDATE (s.next_memreqid, destvar);
+                next_memreqid updated_by SUC
+              |>),
+            SOME (MemAtomicRMW <|
+              addr := a; id := thread.state.next_memreqid;
+              op := op; opnd := opnd_value; order := mem_order; memdeps := {}
+            |>))
+        od
+    | Fence mem_order => return (thread, SOME (MemFence mem_order))
 `
 
 (* Resumes a suspended `thread_state`, converting it into a `running_thread`
@@ -256,7 +296,7 @@ val thread_receive_def = Define`
                  (ms : memory_message_resolve)
                  : running_thread or_error =
     case ms of
-    | ResolvedRead v mid =>
+    | ResolvedLoad v mid =>
         do
           var <- expect (FLOOKUP thread.state.memreq_map mid) "invalid memreqid" ;
           return (thread with frame updated_by λf.
@@ -281,12 +321,13 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
               pending_insts updated_by (INSERT) (current_inst code ts0)
             |>
     ⇒
-      exec ts0 (OK (ts1, []))) ∧
+      exec ts0 (OK (ts1, NONE))) ∧
 
   (∀ts0 msg.
-      msg ∈ ts0.mailbox
+      msg ∈ ts0.state.mailbox
     ⇒
-      exec ts0 (map_error (λts. (ts with mailbox updated_by (DELETE) msg, []))
+      exec ts0 (map_error (λts. (ts with state updated_by (λs.
+                                   s with mailbox updated_by (DELETE) msg), []))
                           (thread_receive msg ts0)))
 
  (* ∧

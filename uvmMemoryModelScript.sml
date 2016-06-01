@@ -175,7 +175,7 @@ val can_be_read_by_def = Define`
 (* Everything above is building up to these two relations, receive and resolve *)
 (*                                                                             *)
 (* The receive relation is for receiving a new memory operation message        *)
-(* The resolve relation is for resolving a Write operation and returning a     *)
+(* The resolve relation is for resolving a MemStore operation and returning a  *)
 (* message                                                                     *)
 (*                                                                             *)
 (*******************************************************************************)
@@ -184,26 +184,27 @@ val can_be_read_by_def = Define`
 val receive_def = Define`
   receive (in_graph, (msg, ttid)) graph' =
     case msg of
-    | Read a' id order' dep =>
+    | MemLoad load =>
         let new_node = <| operation := Rd;
-                          address := a';
+                          address := load.addr;
                           values := NONE;
-                          mid := id;
+                          mid := load.id;
                           thread_id := ttid;
-                          order := order';
-                          ddeps := dep |>
+                          order := load.order;
+                          ddeps := load.memdeps |>
         in (graph' = in_graph with nodes updated_by (λlst. lst ++ [new_node] ))
 
-    | Write a' id vl order' dep =>
+    | MemStore store =>
         let new_node = <| operation := Wr;
-                          address := a';
-                          values := SOME vl;
+                          address := store.addr;
+                          values := SOME store.value;
                           (* mid := LEAST n. ~(∃ nd. (nd.mid = n) ∧ (nd IN in_graph.nodes));*)
-                          mid := id;
+                          mid := store.id;
                           thread_id := ttid;
-                          order := order';
-                          ddeps := dep |>
+                          order := store.order;
+                          ddeps := store.memdeps |>
         in (graph' = in_graph with nodes updated_by (λlst. lst ++ [new_node]))
+    (* TODO: MemCmpXchg, MemAtomicRMW, MemFence *)
 `;
 
 (* TODO: output message *)
