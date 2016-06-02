@@ -6,7 +6,6 @@ open uvmValuesTheory;
 val _ = new_theory "uvmIR";
 
 val _ = type_abbrev ("ssavar", ``:string``)
-val _ = type_abbrev ("label", ``:string``)
 val _ = type_abbrev ("block_label", ``:string``)
 val _ = type_abbrev ("trap_data", ``:num``)
 
@@ -133,29 +132,25 @@ val (cmp_op_type_rules, cmp_op_type_ind, cmp_op_type_cases) = Hol_reln`
 
 val _ = type_abbrev("constname", ``:string``)
 val _ = type_abbrev("typename", ``:string``)
-val _ = type_abbrev("fnname", ``:string``)
-val _ = type_abbrev("fnvname", ``:fnname # num``)
 val _ = type_abbrev("signame", ``:string``)
-val _ = type_abbrev("label", ``:string``)
 
 (* Either a variable or a constant *)
 val _ = type_abbrev("or_const", ``:α + value``)
 val _ = overload_on("Var", ``INL : α -> α or_const``)
 val _ = overload_on("Const", ``INR : value -> α or_const``)
 
-val _ = Datatype`
-  destarg =
-  | PassVar α      (* i.e., something already in scope *)
-  | PassConst value
-  | PassReturnVal num  (* index to resumed value list - may not be any if, for
-                          example, the statement is Return or Tailcall, but
-                          if the statement is a call, the concrete syntax might
-                          be something like
+(* Either a variable or a $-notation return value index
+   
+   $-notation is used for the destinations of CALL, to pass return values that
+   don't get assigned SSA variables. e.g.,
 
-                              CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
-                       *)
-`
+       CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
+*)
+val _ = type_abbrev("destarg", ``:α or_const + num``)
+val _ = overload_on("PassVar", ``INL : α or_const -> α destarg``)
+val _ = overload_on("PassReturnVal", ``INR : num -> α destarg``)
 
+(* A block label with arguments *)
 val _ = type_abbrev("destination", ``:block_label # α destarg list``)
 
 val _ = Datatype`
@@ -175,7 +170,7 @@ val _ = Datatype`
 
 val _ = Datatype`
   calldata = <|
-    methodname : α + fnname ;  (* allowing for indirect calls *)
+    name : α + fnname ;  (* allowing for indirect calls *)
     args : α or_const list ;
     convention : callconvention
   |>
@@ -361,7 +356,7 @@ val right_set_def = Define`
 
 val map_calldata_def = Define`
   map_calldata (f : α -> β) (cd : α calldata) : β calldata = <|
-      methodname := map_left f cd.methodname ;
+      name := map_left f cd.name ;
       args := MAP (map_left f) cd.args ;
       convention := cd.convention
     |>
@@ -403,12 +398,7 @@ val map_inst_def = Define`
 val map_terminst_def = Define`
   map_terminst (f : α -> β) (inst : α terminst) : β terminst =
     let map_dest : α destination -> β destination =
-      λ(dst, args). dst,
-        MAP (λarg. case arg of
-                   | PassVar v => PassVar (f v)
-                   | PassConst v => PassConst v
-                   | PassReturnVal n => PassReturnVal n
-            ) args in
+      I ## (MAP o map_left o map_left) f in
     let map_rd : α resumption_data -> β resumption_data =
       λrd. <|
          normal_dest := map_dest rd.normal_dest ;
@@ -491,20 +481,20 @@ val terminst_vars_def = Define`
   terminst_vars (inst : α terminst) : α set # α set =
     let flat_left_set = λl. set l :> IMAGE left_set :> BIGUNION in
     let dest_vars : α destination -> α set =
-      λ(_, args) v. MEM (PassVar v) args in
+      λ(_, args) v. MEM (PassVar (Var v)) args in
     let rd_vars : α resumption_data -> α set =
       λrd. dest_vars rd.normal_dest ∪ dest_vars rd.exceptional_dest in
     case inst of
     | Return vals => {}, flat_left_set vals
     | ThreadExit => {}, {}
     | Throw vals => {}, flat_left_set vals
-    | TailCall cd => left_set cd.methodname, flat_left_set cd.args
+    | TailCall cd => left_set cd.name, flat_left_set cd.args
     | Branch1 dst => {}, dest_vars dst
     | Branch2 cond dst1 dst2 => left_set cond, dest_vars dst1 ∪ dest_vars dst2
     | Watchpoint NONE rd => {}, rd_vars rd
     | Watchpoint (SOME (id, dst)) rd => {}, dest_vars dst ∪ rd_vars rd
     | WPBranch id dst1 dst2 => {}, dest_vars dst1 ∪ dest_vars dst2
-    | Call cd rd => left_set cd.methodname, flat_left_set cd.args ∪ rd_vars rd
+    | Call cd rd => left_set cd.name, flat_left_set cd.args ∪ rd_vars rd
     | Swapstack stack_id exc params rd =>
         {stack_id}, flat_left_set params ∪ rd_vars rd
     | Switch param def_dst branches =>
@@ -532,11 +522,32 @@ val _ = Datatype`
 `
 
 val _ = Datatype`
+  function = <|
+    signature : signame ;
+    entry_block : block_label ;
+    blocks : block_label |-> ssavar bblock
+  |>
+`
+
+val _ = Datatype`
   declaration =
   | ConstDecl constname uvm_type value
   | TypeDef typename uvm_type
   | FunctionSignature signame uvm_type (uvm_type list)
-  | FuncDef fnname signame label (block_label |-> ssavar bblock)
+  | FunctionDecl fnname signame
+  | FunctionDef fnname function
+`
+
+val _ = type_abbrev("bundle", ``:declaration set``)
+
+val _ = Datatype`
+  environment = <|
+    constants : constname |-> (uvm_type # value) ;
+    types : typename |-> uvm_type ;
+    funcsigs : signame |-> uvm_type # uvm_type list ;
+    func_versions : fnname |-> fnvname option ;
+    functions : fnvname |-> function
+  |>
 `
 
 val _ = type_abbrev("tid", ``:num``)

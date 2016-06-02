@@ -12,32 +12,18 @@ val _ = reveal "C" (* The C (flip) combinator is used in this theory *)
 val _ = type_abbrev("register", ``:ssavar # num``)
 
 val _ = Datatype`
-  fninfo = <|
-    start_label : label ;
-    blocks : block_label |-> ssavar bblock
+  suspended_frame = <|
+    fn : function ;
+    normal_resume : register destination ;
+    exceptional_resume : register destination option
   |>
 `
-
-val _ = Datatype`
-  frame = <|
-    fn : fninfo ;
-    registers : register |-> value
-  |>
-`
-
-val _ = type_abbrev(
-  "resumption_point", ``:block_label # register or_const list``)
-
-(* Normal and exceptional resumption points *)
-val _ = type_abbrev(
-  "respt_pair", ``:resumption_point # resumption_point option``)
-
-val _ = type_abbrev("sus_frame", ``:frame # respt_pair``)
 
 val _ = Datatype`
   thread_state = <|
-    stack : sus_frame list ;
+    stack : suspended_frame list ;
     tid : tid ;
+    registers : register |-> value ;
     memreq_map : memreqid |-> register ;
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
@@ -51,7 +37,7 @@ val _ = Datatype`
 
 val _ = Datatype`
   running_thread = <|
-    frame : frame ;
+    fn : function ;
     block : register bblock ;
     pc : num ;
     register_index : num ;
@@ -60,11 +46,11 @@ val _ = Datatype`
 `
 
 (* True if the instruction `i` is executable (all the variables it reads are
-   defined) in the thread `thread`.
+   defined) in the thread state `state`.
 *)
 val is_ready_def = Define`
-  is_ready (thread : running_thread) (i : register instruction) : bool ⇔
-    inst_input_vars i ⊆ FDOM thread.frame.registers
+  is_ready (state : thread_state) (i : register instruction) : bool ⇔
+    inst_input_vars i ⊆ FDOM state.registers
 `
 
 (* True if the thread's program counter is at (or after) the terminal instruction
@@ -85,15 +71,15 @@ val current_inst_def = Define`
       else return (EL thread.pc thread.block.body)
 `
 
-(* Returns the value of a variable or constant in a given frame, or an error if
-   the variable is not yet available in the frame.
+(* Returns the value of a variable or constant in a given state, or an error if
+   the variable is not yet available in the state.
 *)
 val get_value_def = Define`
-  get_value (f : frame) (x : register or_const) : value or_error =
+  get_value (s : thread_state) (x : register or_const) : value or_error =
     case x of
-    | INL reg =>
-        expect (FLOOKUP f.registers reg) "register value not yet available"
-    | INR v => return v
+    | Var reg =>
+        expect (FLOOKUP s.registers reg) "register value not yet available"
+    | Const v => return v
 `
 
 (* Evaluates a binary operation, returning the values it produces. Returns an
@@ -103,8 +89,8 @@ val get_value_def = Define`
 val eval_bop_def = Define`
   eval_bop bop v1 v2 : value list or_error =
     case bop of
-    | ADD => do v <- expect (value_add v1 v2) "type mismatch"; return [v] od
-    | SDIV => do v <- expect (value_div v1 v2) "type mismatch"; return [v] od
+    | ADD => map_error (C CONS []) (value_add v1 v2)
+    | SDIV => map_error (C CONS []) (value_div v1 v2)
 `
 
 (* Evaluates an expression in a given thread, returning the values it produces.
@@ -112,23 +98,17 @@ val eval_bop_def = Define`
    behavior (such as division by zero).
 *)
 val eval_expr_def = Define`
-  eval_expr (f : frame) (e : register or_const expression) : value list or_error =
+  eval_expr (s : thread_state)
+            (e : register or_const expression)
+            : value list or_error =
     case e of
-    | Id v => do v' <- get_value f v; return [v'] od
+    | Id v => do v' <- get_value s v; return [v'] od
     | BinOp bop v1 v2 =>
         do
-          v1' <- get_value f v1 ;
-          v2' <- get_value f v2 ;
+          v1' <- get_value s v1 ;
+          v2' <- get_value s v2 ;
           eval_bop bop v1' v2'
         od
-`
-
-(* Creates a new thread state in which a single register has been assigned a
-   value.
-*)
-val bind_register_def = Define`
-  bind_register : running_thread -> register # value -> running_thread =
-    λt u. t with frame updated_by λf. f with registers updated_by C $|+ u
 `
 
 (* Generates a new running_thread state and a set of memory messages by
@@ -142,13 +122,16 @@ val exec_inst_def = Define`
     case inst of
     | Assign regs expr =>
         do
-          values <- eval_expr thread.frame expr ;
-          return (FOLDL bind_register thread (ZIP (regs, values)), NONE)
+          values <- eval_expr thread.state expr ;
+          return (
+            thread with state updated_by
+              (λs. s with registers updated_by C $|++ (ZIP (regs, values))),
+            NONE)
         od
     | Load destvar is_iref src mem_order =>
         do
-          iref <- get_value thread.frame (Var src) ;
-          a <- expect (value_to_address iref) "invalid iref" ;
+          iref <- get_value thread.state (Var src) ;
+          a <- get_iref_addr iref ;
           return (
             thread with state updated_by
               (λs. s with <|
@@ -162,9 +145,9 @@ val exec_inst_def = Define`
         od
     | Store srcvar is_iref destvar mem_order =>
         do
-          src_value <- get_value thread.frame srcvar ;
-          dest_iref <- get_value thread.frame (Var destvar) ;
-          a <- expect (value_to_address dest_iref) "invalid iref" ;
+          src_value <- get_value thread.state srcvar ;
+          dest_iref <- get_value thread.state (Var destvar) ;
+          a <- get_iref_addr dest_iref ;
           return (
             thread with state updated_by
               (λs. s with next_memreqid updated_by SUC),
@@ -175,10 +158,10 @@ val exec_inst_def = Define`
         od
     | CmpXchg v1 v2 is_iref is_strong success_order failure_order loc exp des =>
         do
-          loc_iref <- get_value thread.frame (Var loc) ;
-          exp_value <- get_value thread.frame exp ;
-          des_value <- get_value thread.frame des ;
-          a <- expect (value_to_address loc_iref) "invalid iref" ;
+          loc_iref <- get_value thread.state (Var loc) ;
+          exp_value <- get_value thread.state exp ;
+          des_value <- get_value thread.state des ;
+          a <- get_iref_addr loc_iref ;
           return (
             thread with state updated_by
               (λs. s with <|
@@ -195,9 +178,9 @@ val exec_inst_def = Define`
         od
     | AtomicRMW destvar is_iref mem_order op loc opnd =>
         do
-          loc_iref <- get_value thread.frame (Var loc) ;
-          opnd_value <- get_value thread.frame opnd ;
-          a <- expect (value_to_address loc_iref) "invalid iref" ;
+          loc_iref <- get_value thread.state (Var loc) ;
+          opnd_value <- get_value thread.state opnd ;
+          a <- get_iref_addr loc_iref ;
           return (
             thread with state updated_by
               (λs. s with <|
@@ -212,31 +195,23 @@ val exec_inst_def = Define`
     | Fence mem_order => return (thread, SOME (MemFence mem_order))
 `
 
-(* Resumes a suspended `thread_state`, converting it into a `running_thread`
-   whose execution starts at the top frame of the suspended thread's stack.
-   Returns an error if the suspended thread has an empty stack, or if its stack
-   refers to a nonexistent bblock.
+(* Enters a new basic block in the given thread and function, with the given
+   arguments, creating a `running_thread` record. Returns an error if the block
+   label refers to a nonexistent block, or if the wrong number of arguments is
+   passed.
 *)
-val resume_thread_def = Define`
-  resume_thread (state : thread_state)
-                (normal : bool) (* F if handling an exception *)
-                : running_thread or_error =
+val enter_block_def = Define`
+  enter_block (state : thread_state)
+              (fn : function)
+              (label : block_label)
+              (args : register or_const list)
+              : running_thread or_error =
     do
-      (* 1. Pop the next frame off of the stack. *)
-      ((fr, respts), stack) <-
-        case state.stack of
-        | next_sus_fr::rest => return (next_sus_fr, rest)
-        | NIL => Error "stack underflow" ;
+      (* 1. Look up the block that the label refers to. *)
+      block <- expect (FLOOKUP fn.blocks label) ("no block named " ++ label);
+      assert (LENGTH args = LENGTH block.args) "block arity mismatch" ;
 
-      (label, res_args) <- 
-        if normal then return (FST respts)
-                  else expect (SND respts) "no exceptional resumption point" ;
-
-      (* 2. Look up the block that the frame refers to. *)
-      block <- expect (FLOOKUP fr.fn.blocks label) ("no block named " ++ label);
-      assert (LEN res_args = LEN block.args) "block arity mismatch" ;
-
-      (* 3. Convert the block's SSA variables into registers. *)
+      (* 2. Convert the block's SSA variables into registers. *)
       let new_block : register bblock =
         let reg = λv. (v, state.next_register_index) in
         <|
@@ -246,50 +221,170 @@ val resume_thread_def = Define`
           keepalives := MAP reg block.keepalives
         |> in
 
-      (* 4. Add the resumption point arguments to the state. Constant values
-            are inserted directly into thread.frame.registers, while passed
-            variables are converted into pending Assign instructions.
-      *)
+      (* 3. Add the resumption point arguments to the state. Constant values
+            are inserted directly into thread.state.registers, while passed
+            variables are converted into pending Assign instructions. *)
       let (new_registers, new_pending)
           : (register |-> value) # register instruction set =
         FOLDR (λ((var, _), arg).
           case arg of
           | Var var' => I ## $INSERT (Assign [var] (Id (Var var')))
           | Const val => C $|+ (var, val) ## I
-        ) (FEMPTY, {}) (ZIP (new_block.args, res_args)) in
+        ) (FEMPTY, {}) (ZIP (new_block.args, args)) in
 
-      (* 5. Construct a new running_thread record for the new state. *)
+      (* 4. Construct a new running_thread record for the new state. *)
       return <|
-          frame := fr with registers updated_by (FUNION new_registers) ;
+          fn := fn ;
           block := new_block ;
           pc := 0 ;
           register_index := state.next_register_index ;
           state := state with <|
-            stack := stack ;
-            pending_insts updated_by $UNION new_pending;
+            registers updated_by (FUNION new_registers) ;
+            pending_insts updated_by ($UNION new_pending) ;
             next_register_index updated_by SUC
           |>
         |>
     od
 `
 
-val thread_receive_def = Define`
-  thread_receive (thread : running_thread)
-                 (ms : memory_message_resolve)
+(* Given an environment and a thread state, creates a `running_thread` record
+   for the beginning of the execution of a named function. Returns an error if
+   the named function does not exist, or if the arguments are invalid.
+*)
+val enter_function_def = Define`
+  enter_function (env : environment)
+                 (state : thread_state)
+                 (cd : register calldata)
                  : running_thread or_error =
+    do
+      fnname <-
+        case cd.name of
+        | INL v => monad_bind (get_value state (Var v)) get_funcref_fnname
+        | INR name => return name ;
+      version_opt <- expect (FLOOKUP env.func_versions fnname)
+        ("undeclared function: " ++ fnname) ;
+      (* TODO: Trap on undefined functions *)
+      version <- expect version_opt "undefined function" ;
+      fn <- expect (FLOOKUP env.functions version) "missing function version" ;
+      enter_block state fn fn.entry_block cd.args
+    od
+`
+
+(* Resumes a suspended `thread_state`, converting it into a `running_thread`
+   whose execution starts at the top frame of the suspended thread's stack.
+   Returns an error if the suspended thread has an empty stack, or if its stack
+   refers to a nonexistent bblock.
+*)
+val resume_thread_def = Define`
+  resume_thread (state : thread_state)
+                (normal : bool) (* F if handling an exception *)
+                (return_vals : register or_const list)
+                : running_thread or_error =
+    do
+      (frame, stack_tail) <-
+        case state.stack of
+        | next_sus_frame::rest => return (next_sus_frame, rest)
+        | NIL => Error "stack underflow" ;
+
+      (label, destargs) <- 
+        if normal
+        then return frame.normal_resume
+        else expect frame.exceptional_resume "no exceptional resumption point" ;
+
+      args <- FOLDR (λdestarg args.
+        do
+          tl <- args ;
+          hd <- case destarg of
+                | PassVar v => return v
+                | PassReturnVal n =>
+                    if n < LENGTH return_vals
+                    then return (EL n return_vals)
+                    else Error "return value index out of bounds" ;
+          return (hd :: tl)
+        od) (OK []) destargs ;
+
+      enter_block (state with stack := stack_tail) frame.fn label args
+    od
+`
+
+(* Executes a terminal instruction in a given environment and thread, returning
+   a running_thread in a different block. Returns an error if something about
+   the terminal instruction or the environment is invalid (e.g., an arity
+   mismatch, or a nonexistent function or block).
+*)
+val exec_terminst_def = Define`
+  exec_terminst (env : environment)
+                (thread : running_thread)
+                (inst : register terminst)
+                : running_thread or_error =
+    let no_returns : register destarg list -> register or_const list or_error =
+      FOLDR (λdestarg args.
+        do
+          tl <- args ;
+          hd <- case destarg of
+                | PassVar v => return v
+                | _ => Error "return value referenced in non-CALL instruction" ;
+          return (hd::tl)
+        od) (OK []) in
+    case inst of
+    | Return vals => resume_thread thread.state T vals
+    | ThreadExit =>
+        (* TODO: Return something more sensible than Error for ThreadExit *)
+        Error "thread exited"
+    | Throw vals => resume_thread thread.state F vals
+    | TailCall cd => enter_function env thread.state cd
+    | Branch1 (lbl, destargs) => 
+        do
+          args <- no_returns destargs ;
+          enter_block thread.state thread.fn lbl args
+        od
+    | Branch2 cond (l1, destargs1) (l2, destargs2) =>
+        (* TODO: Branch speculation *)
+        do
+          cond_value <- get_value thread.state cond ;
+          cond_bool <- get_int1_as_bool cond_value ;
+          args1 <- no_returns destargs1 ;
+          args2 <- no_returns destargs2 ;
+          if cond_bool
+          then enter_block thread.state thread.fn l1 args1
+          else enter_block thread.state thread.fn l2 args2
+        od
+    | Call cd rd =>
+        enter_function env (thread.state with stack updated_by (CONS <|
+            fn := thread.fn ;
+            normal_resume := rd.normal_dest ;
+            exceptional_resume := SOME rd.exceptional_dest
+          |>)) cd
+    | Switch param def_dst branches =>
+        (* TODO: Branch speculation *)
+        do
+          param_value <- get_value thread.state param ;
+          (lbl, destargs) <- return (
+            case FLOOKUP branches param_value of
+            | SOME dst => dst
+            | NONE => def_dst) ;
+          args <- no_returns destargs ;
+          enter_block thread.state thread.fn lbl args
+        od
+    (* TODO: Watchpoint, WPBranch, Swapstack, ExnInstruction *)
+`
+
+val thread_receive_def = Define`
+  thread_receive (state : thread_state)
+                 (ms : memory_message_resolve)
+                 : thread_state or_error =
     case ms of
     | ResolvedLoad v mid =>
         do
-          var <- expect (FLOOKUP thread.state.memreq_map mid) "invalid memreqid" ;
-          return (thread with frame updated_by λf.
-            f with registers updated_by C FUPDATE (var, v))
+          var <- expect (FLOOKUP state.memreq_map mid) "invalid memreqid" ;
+          return (state with registers updated_by C FUPDATE (var, v))
         od
-`;
+`
 
 val (exec_rules, exec_ind, exec_cases) = Hol_reln`
   (∀thread inst.
-      inst ∈ ts0.state.pending_insts
-      ∧ is_ready thread inst
+      inst ∈ thread.state.pending_insts
+      ∧ is_ready thread.state inst
     ⇒
       exec thread
            (exec_inst (thread with state updated_by λs.
@@ -310,10 +405,9 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
       msg ∈ thread.state.mailbox
     ⇒
       exec thread (map_error
-        (λt. (t with state updated_by (λs.
-                s with mailbox updated_by C $DELETE msg),
-             NONE))
-        (thread_receive thread msg)))
+        (λs. (thread with state := (s with mailbox updated_by C $DELETE msg),
+              NONE))
+        (thread_receive thread.state msg)))
 
   (*
     add a rule to allow blocks to finish and transfer,
