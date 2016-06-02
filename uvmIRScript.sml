@@ -557,28 +557,31 @@ val _ = type_abbrev("memdeps", ``:memreqid set``)
 
 (* `memory_message` is the type of memory mutation actions waiting to be
    performed. Because most of the messages have complicated argument lists,
-   their arguments are defined as records first.
+   their arguments are defined as records.
 *)
-val memory_message_load_args_def = Datatype`
+val memory_message_def = Datatype`
+  memory_message =
+  | MemLoad memory_message_load_args
+  | MemStore memory_message_store_args
+  | MemCmpXchg memory_message_cmp_xchg_args
+  | MemAtomicRMW memory_message_atomic_rmw_args
+  | MemFence memory_order ;
+  
   memory_message_load_args = <|
     addr: addr ;
     id : memreqid ;
     order : memory_order ;
     memdeps : memdeps
-  |>
-`
-
-val memory_message_store_args_def = Datatype`
+  |> ;
+  
   memory_message_store_args = <|
     addr: addr ;
     value : value ;
     id : memreqid ;
     order : memory_order ;
     memdeps : memdeps
-  |>
-`
-
-val memory_message_cmp_xchg_args_def = Datatype`
+  |> ;
+  
   memory_message_cmp_xchg_args = <|
     addr : addr ;
     id : memreqid ;
@@ -588,10 +591,8 @@ val memory_message_cmp_xchg_args_def = Datatype`
     expected : value ;
     desired : value ;
     memdeps : memdeps
-  |>
-`
-
-val memory_message_atomic_rmw_args_def = Datatype`
+  |> ;
+  
   memory_message_atomic_rmw_args = <|
     addr : addr ;
     id : memreqid ;
@@ -602,18 +603,10 @@ val memory_message_atomic_rmw_args_def = Datatype`
   |>
 `
 
-val memory_message_def = Datatype`
-  memory_message =
-  | MemLoad memory_message_load_args
-  | MemStore memory_message_store_args
-  | MemCmpXchg memory_message_cmp_xchg_args
-  | MemAtomicRMW memory_message_atomic_rmw_args
-  | MemFence memory_order
-`
-
 val memory_message_resolve_def = Datatype`
   memory_message_resolve =
-  | ResolvedLoad value memreqid`;
+  | ResolvedLoad value memreqid
+`
 
 val _ = export_theory();
 

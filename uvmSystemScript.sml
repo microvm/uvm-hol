@@ -61,7 +61,7 @@ val read_var_def = Define`
 
 val eval_exp_def = Define`
   eval_exp (e:num) : (value # value) MSM =
-    return ((Int 32 1), (Int 32 8))
+    return ((IntV 32 1), (IntV 32 8))
 `
 
 val valbind_def = Define`

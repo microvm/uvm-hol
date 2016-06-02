@@ -28,7 +28,7 @@ val resolve' = Define`
 Define `empty = <| nodes:=[]; rf:=FEMPTY |>`;
 
 (* Abbreviation for defining 8-bit Ints *)
-val n = Define`n m = (Int m 8)`;
+val n = Define`n m = (IntV m 8)`;
 
 
 
