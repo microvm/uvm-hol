@@ -1,7 +1,8 @@
 open HolKernel Parse boolLib bossLib;
 
 open uvmIRTheory
-open errorMonadTheory
+open uvmErrorTheory
+open sumMonadTheory
 open lcsymtacs
 open monadsyntax
 
@@ -67,7 +68,7 @@ val at_block_end_def = Define`
 val current_inst_def = Define`
   current_inst (thread : running_thread) : register instruction or_error =
     if at_block_end thread
-      then Error "no current instruction; program counter at end"
+      then state_error "no current instruction; program counter at end"
       else return (EL thread.pc thread.block.body)
 `
 
@@ -78,7 +79,8 @@ val get_value_def = Define`
   get_value (s : thread_state) (x : register or_const) : value or_error =
     case x of
     | Var reg =>
-        expect (FLOOKUP s.registers reg) "register value not yet available"
+        expect (FLOOKUP s.registers reg) 
+          (state_error "register value not yet available")
     | Const v => return v
 `
 
@@ -89,8 +91,8 @@ val get_value_def = Define`
 val eval_bop_def = Define`
   eval_bop bop v1 v2 : value list or_error =
     case bop of
-    | ADD => map_error (C CONS []) (value_add v1 v2)
-    | SDIV => map_error (C CONS []) (value_div v1 v2)
+    | ADD => lift_left (C CONS []) (value_add v1 v2)
+    | SDIV => lift_left (C CONS []) (value_div v1 v2)
 `
 
 (* Evaluates an expression in a given thread, returning the values it produces.
@@ -102,7 +104,7 @@ val eval_expr_def = Define`
             (e : register or_const expression)
             : value list or_error =
     case e of
-    | Id v => do v' <- get_value s v; return [v'] od
+    | Id v => lift_left (C CONS []) (get_value s v)
     | BinOp bop v1 v2 =>
         do
           v1' <- get_value s v1 ;
@@ -208,8 +210,11 @@ val enter_block_def = Define`
               : running_thread or_error =
     do
       (* 1. Look up the block that the label refers to. *)
-      block <- expect (FLOOKUP fn.blocks label) ("no block named " ++ label);
-      assert (LENGTH args = LENGTH block.args) "block arity mismatch" ;
+      block <- expect (FLOOKUP fn.blocks label) 
+        (state_error ("no block named " ++ label));
+
+      assert (LENGTH args = LENGTH block.args)
+        (type_error "block arity mismatch");
 
       (* 2. Convert the block's SSA variables into registers. *)
       let new_block : register bblock =
@@ -257,15 +262,15 @@ val enter_function_def = Define`
                  (cd : register calldata)
                  : running_thread or_error =
     do
-      fnname <-
-        case cd.name of
-        | INL v => monad_bind (get_value state (Var v)) get_funcref_fnname
-        | INR name => return name ;
+      fnname <- merge_right
+          (λv. get_value state (Var v) >>= get_funcref_fnname)
+          (lift_right return cd.name) ;
       version_opt <- expect (FLOOKUP env.func_versions fnname)
-        ("undeclared function: " ++ fnname) ;
+        (state_error ("undeclared function: " ++ fnname)) ;
       (* TODO: Trap on undefined functions *)
-      version <- expect version_opt "undefined function" ;
-      fn <- expect (FLOOKUP env.functions version) "missing function version" ;
+      version <- expect version_opt (undef_error "undefined function") ;
+      fn <- expect (FLOOKUP env.functions version) 
+        (state_error "missing function version") ;
       enter_block state fn fn.entry_block cd.args
     od
 `
@@ -284,22 +289,22 @@ val resume_thread_def = Define`
       (frame, stack_tail) <-
         case state.stack of
         | next_sus_frame::rest => return (next_sus_frame, rest)
-        | NIL => Error "stack underflow" ;
+        | NIL => state_error "stack underflow" ;
 
       (label, destargs) <- 
         if normal
         then return frame.normal_resume
-        else expect frame.exceptional_resume "no exceptional resumption point" ;
+        else expect frame.exceptional_resume
+               (state_error "no exceptional resumption point") ;
 
       args <- FOLDR (λdestarg args.
         do
           tl <- args ;
-          hd <- case destarg of
-                | PassVar v => return v
-                | PassReturnVal n =>
-                    if n < LENGTH return_vals
-                    then return (EL n return_vals)
-                    else Error "return value index out of bounds" ;
+          hd <- merge_left
+            (λn. assert (n < LENGTH return_vals)
+                   (state_error "return value index out of bounds")
+                 >> return (EL n return_vals))
+            (lift_left return destarg) ;
           return (hd :: tl)
         od) (OK []) destargs ;
 
@@ -323,14 +328,14 @@ val exec_terminst_def = Define`
           tl <- args ;
           hd <- case destarg of
                 | PassVar v => return v
-                | _ => Error "return value referenced in non-CALL instruction" ;
+                | _ => state_error "return value in non-CALL instruction" ;
           return (hd::tl)
         od) (OK []) in
     case inst of
     | Return vals => resume_thread thread.state T vals
     | ThreadExit =>
         (* TODO: Return something more sensible than Error for ThreadExit *)
-        Error "thread exited"
+        undef_error "thread exited"
     | Throw vals => resume_thread thread.state F vals
     | TailCall cd => enter_function env thread.state cd
     | Branch1 (lbl, destargs) => 
@@ -376,7 +381,8 @@ val thread_receive_def = Define`
     case ms of
     | ResolvedLoad v mid =>
         do
-          var <- expect (FLOOKUP state.memreq_map mid) "invalid memreqid" ;
+          var <- expect (FLOOKUP state.memreq_map mid)
+                   (state_error "invalid memreqid") ;
           return (state with registers updated_by C FUPDATE (var, v))
         od
 `
@@ -404,7 +410,7 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
   ∧ (∀thread msg.
       msg ∈ thread.state.mailbox
     ⇒
-      exec thread (map_error
+      exec thread (lift_left
         (λs. (thread with state := (s with mailbox updated_by C $DELETE msg),
               NONE))
         (thread_receive thread.state msg)))

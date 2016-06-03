@@ -2,6 +2,7 @@ open HolKernel Parse boolLib bossLib;
 
 open uvmTypesTheory;
 open uvmValuesTheory;
+open sumMonadTheory;
 
 val _ = new_theory "uvmIR";
 
@@ -318,46 +319,14 @@ val _ = Datatype`
    the second argument is indeed 0.
 *)
 
-(* Some extra sum type functions, for use with the or_const type. Because these
-   are generic, they should probably be put in another file at some point.
-*)
-
-val map_left_def = Define`
-  map_left (f : α -> β) (sum : α + γ) : β + γ =
-    case sum of
-    | INL a => INL (f a)
-    | INR b => INR b
-`
-
-val map_right_def = Define`
-  map_right (f : α -> β) (sum : γ + α) : γ + β =
-    case sum of
-    | INL a => INL a
-    | INR b => INR (f b)
-`
-
-val left_set_def = Define`
-  left_set (sum : α + β) : α set =
-    case sum of
-    | INL a => {a}
-    | INR _ => {}
-`
-
-val right_set_def = Define`
-  right_set (sum : α + β) : β set =
-    case sum of
-    | INL _ => {}
-    | INR b => {b}
-`
-
 (* Map functions: map the SSA variables in expressions, instructions, etc. to
    new SSA variable types. Each maps from an `α foo` to a `β foo`.
 *)
 
 val map_calldata_def = Define`
   map_calldata (f : α -> β) (cd : α calldata) : β calldata = <|
-      name := map_left f cd.name ;
-      args := MAP (map_left f) cd.args ;
+      name := lift_left f cd.name ;
+      args := MAP (lift_left f) cd.args ;
       convention := cd.convention
     |>
 `
@@ -385,40 +354,40 @@ val map_expr_def = Define`
 val map_inst_def = Define`
   map_inst (f : α -> β) (inst : α instruction) : β instruction =
     case inst of
-    | Assign v e => Assign (MAP f v) (map_expr (map_left f) e)
+    | Assign v e => Assign (MAP f v) (map_expr (lift_left f) e)
     | Load v ptr src ord => Load (f v) ptr (f src) ord
-    | Store src ptr dst ord => Store (map_left f src) ptr (f dst) ord
+    | Store src ptr dst ord => Store (lift_left f src) ptr (f dst) ord
     | CmpXchg v1 v2 ptr weak sord ford loc exp des =>
-        CmpXchg (f v1) (f v2) ptr weak sord ford (f loc) (map_left f exp) (map_left f des)
+        CmpXchg (f v1) (f v2) ptr weak sord ford (f loc) (lift_left f exp) (lift_left f des)
     | AtomicRMW v ptr ord op loc opnd =>
-        AtomicRMW (f v) ptr ord op (f loc) (map_left f opnd)
+        AtomicRMW (f v) ptr ord op (f loc) (lift_left f opnd)
     | Fence ord => Fence ord
 `
 
 val map_terminst_def = Define`
   map_terminst (f : α -> β) (inst : α terminst) : β terminst =
     let map_dest : α destination -> β destination =
-      I ## (MAP o map_left o map_left) f in
+      I ## (MAP o lift_left o lift_left) f in
     let map_rd : α resumption_data -> β resumption_data =
       λrd. <|
          normal_dest := map_dest rd.normal_dest ;
          exceptional_dest := map_dest rd.exceptional_dest
        |> in
     case inst of
-    | Return vals => Return (MAP (map_left f) vals)
+    | Return vals => Return (MAP (lift_left f) vals)
     | ThreadExit => ThreadExit
-    | Throw vals => Throw (MAP (map_left f) vals)
+    | Throw vals => Throw (MAP (lift_left f) vals)
     | TailCall cd => TailCall (map_calldata f cd)
     | Branch1 dst => Branch1 (map_dest dst)
     | Branch2 cond dst1 dst2 =>
-        Branch2 (map_left f cond) (map_dest dst1) (map_dest dst2)
+        Branch2 (lift_left f cond) (map_dest dst1) (map_dest dst2)
     | Watchpoint NONE rd => Watchpoint NONE (map_rd rd)
     | Watchpoint (SOME (id, dst)) rd =>
         Watchpoint (SOME (id, map_dest dst)) (map_rd rd)
     | WPBranch id dst1 dst2 => WPBranch id (map_dest dst1) (map_dest dst2)
     | Call cd rd => Call (map_calldata f cd) (map_rd rd)
     | Swapstack stack_id exc params rd =>
-        Swapstack (f stack_id) exc (MAP (map_left f) params) (map_rd rd)
+        Swapstack (f stack_id) exc (MAP (lift_left f) params) (map_rd rd)
     (* TODO: Implement map_terminst for Switch *)
     | ExnInstruction inst rd => ExnInstruction (map_inst f inst) (map_rd rd)
 `
