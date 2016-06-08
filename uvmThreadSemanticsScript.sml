@@ -25,7 +25,7 @@ val _ = Datatype`
     stack : suspended_frame list ;
     tid : tid ;
     registers : register |-> value ;
-    memreq_map : memreqid |-> register ;
+    memreq_map : memreqid |-> register list;
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
     addrwr_map : num |-> addr ;
@@ -79,7 +79,7 @@ val get_value_def = Define`
   get_value (s : thread_state) (x : register or_const) : value or_error =
     case x of
     | Var reg =>
-        expect (FLOOKUP s.registers reg) 
+        expect (FLOOKUP s.registers reg)
           (state_error "register value not yet available")
     | Const v => return v
 `
@@ -125,6 +125,9 @@ val exec_inst_def = Define`
     | Assign regs expr =>
         do
           values <- eval_expr thread.state expr ;
+          assert (LENGTH values = LENGTH regs) (undef_error "bad assign");
+          assert (DISJOINT (set regs) (FDOM thread.state.registers))
+                 (undef_error "register being reused") ;
           return (
             thread with state updated_by
               (λs. s with registers updated_by C $|++ (ZIP (regs, values))),
@@ -137,12 +140,13 @@ val exec_inst_def = Define`
           return (
             thread with state updated_by
               (λs. s with <|
-                memreq_map updated_by C FUPDATE (s.next_memreqid, destvar);
+                memreq_map updated_by C FUPDATE (s.next_memreqid, [destvar]);
                 next_memreqid updated_by SUC
               |>),
             SOME (MemLoad <|
               addr := a; id := thread.state.next_memreqid;
-              order := mem_order; memdeps := {}
+              order := mem_order;
+              memdeps := {} (* TODO : needs filling in *)
             |>))
         od
     | Store srcvar is_iref destvar mem_order =>
@@ -155,7 +159,8 @@ val exec_inst_def = Define`
               (λs. s with next_memreqid updated_by SUC),
             SOME (MemStore <|
               addr := a; id := thread.state.next_memreqid;
-              value := src_value; order := mem_order; memdeps := {}
+              value := src_value; order := mem_order;
+              memdeps := {} (* TODO : needs filling in *)
             |>))
         od
     | CmpXchg v1 v2 is_iref is_strong success_order failure_order loc exp des =>
@@ -167,15 +172,15 @@ val exec_inst_def = Define`
           return (
             thread with state updated_by
               (λs. s with <|
-                memreq_map updated_by C $|++
-                  [(s.next_memreqid, v1); (s.next_memreqid, v2)];
+                memreq_map updated_by C FUPDATE (s.next_memreqid, [v1; v2]);
                 next_memreqid updated_by SUC
               |>),
             SOME (MemCmpXchg <|
               addr := a; id := thread.state.next_memreqid;
               expected := exp_value; desired := des_value;
               success_order := success_order; failure_order := failure_order;
-              is_strong := is_strong; memdeps := {}
+              is_strong := is_strong;
+              memdeps := {} (* TODO : needs filling in *)
             |>))
         od
     | AtomicRMW destvar is_iref mem_order op loc opnd =>
@@ -186,15 +191,17 @@ val exec_inst_def = Define`
           return (
             thread with state updated_by
               (λs. s with <|
-                memreq_map updated_by C FUPDATE (s.next_memreqid, destvar);
+                memreq_map updated_by C FUPDATE (s.next_memreqid, [destvar]);
                 next_memreqid updated_by SUC
               |>),
             SOME (MemAtomicRMW <|
               addr := a; id := thread.state.next_memreqid;
-              op := op; opnd := opnd_value; order := mem_order; memdeps := {}
+              op := op; opnd := opnd_value; order := mem_order;
+              memdeps := {} (* TODO : needs filling in *)
             |>))
         od
-    | Fence mem_order => return (thread, SOME (MemFence mem_order))
+    | Fence mem_order => return (thread, SOME (MemFence mem_order {}))
+        (* TODO : needs filling in *)
 `
 
 (* Enters a new basic block in the given thread and function, with the given
@@ -210,7 +217,7 @@ val enter_block_def = Define`
               : running_thread or_error =
     do
       (* 1. Look up the block that the label refers to. *)
-      block <- expect (FLOOKUP fn.blocks label) 
+      block <- expect (FLOOKUP fn.blocks label)
         (state_error ("no block named " ++ label));
 
       assert (LENGTH args = LENGTH block.args)
@@ -229,13 +236,10 @@ val enter_block_def = Define`
       (* 3. Add the resumption point arguments to the state. Constant values
             are inserted directly into thread.state.registers, while passed
             variables are converted into pending Assign instructions. *)
-      let (new_registers, new_pending)
-          : (register |-> value) # register instruction set =
-        FOLDR (λ((var, _), arg).
-          case arg of
-          | Var var' => I ## $INSERT (Assign [var] (Id (Var var')))
-          | Const val => C $|+ (var, val) ## I
-        ) (FEMPTY, {}) (ZIP (new_block.args, args)) in
+      let new_pending : register instruction set =
+        FOLDR (λ((var, _), arg). $INSERT (Assign [var] (Id arg)))
+              {}
+              (ZIP (new_block.args, args)) in
 
       (* 4. Construct a new running_thread record for the new state. *)
       return <|
@@ -244,7 +248,6 @@ val enter_block_def = Define`
           pc := 0 ;
           register_index := state.next_register_index ;
           state := state with <|
-            registers updated_by (FUNION new_registers) ;
             pending_insts updated_by ($UNION new_pending) ;
             next_register_index updated_by SUC
           |>
@@ -269,7 +272,7 @@ val enter_function_def = Define`
         (state_error ("undeclared function: " ++ fnname)) ;
       (* TODO: Trap on undefined functions *)
       version <- expect version_opt (undef_error "undefined function") ;
-      fn <- expect (FLOOKUP env.functions version) 
+      fn <- expect (FLOOKUP env.functions version)
         (state_error "missing function version") ;
       enter_block state fn fn.entry_block cd.args
     od
@@ -289,9 +292,9 @@ val resume_thread_def = Define`
       (frame, stack_tail) <-
         case state.stack of
         | next_sus_frame::rest => return (next_sus_frame, rest)
-        | NIL => state_error "stack underflow" ;
+        | [] => state_error "stack underflow" ;
 
-      (label, destargs) <- 
+      (label, destargs) <-
         if normal
         then return frame.normal_resume
         else expect frame.exceptional_resume
@@ -338,7 +341,7 @@ val exec_terminst_def = Define`
         undef_error "thread exited"
     | Throw vals => resume_thread thread.state F vals
     | TailCall cd => enter_function env thread.state cd
-    | Branch1 (lbl, destargs) => 
+    | Branch1 (lbl, destargs) =>
         do
           args <- no_returns destargs ;
           enter_block thread.state thread.fn lbl args
@@ -379,11 +382,13 @@ val thread_receive_def = Define`
                  (ms : memory_message_resolve)
                  : thread_state or_error =
     case ms of
-    | ResolvedLoad v mid =>
+    | ResolvedLoad vs mid =>
         do
-          var <- expect (FLOOKUP state.memreq_map mid)
-                   (state_error "invalid memreqid") ;
-          return (state with registers updated_by C FUPDATE (var, v))
+          vars <- expect (FLOOKUP state.memreq_map mid)
+                         (state_error "invalid memreqid") ;
+          assert (LENGTH vars = LENGTH vs) ;
+          assert (DISJOINT (set vars) (FDOM state.registers)) ;
+          return (state with registers updated_by C $|++ ZIP (vars, vs))
         od
 `
 
@@ -465,4 +470,3 @@ which will be a disjunction of possible clauses.
 *)
 
 val _ = export_theory()
-
