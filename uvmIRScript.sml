@@ -141,7 +141,7 @@ val _ = overload_on("Var", ``INL : α -> α or_const``)
 val _ = overload_on("Const", ``INR : value -> α or_const``)
 
 (* Either a variable or a $-notation return value index
-   
+
    $-notation is used for the destinations of CALL, to pass return values that
    don't get assigned SSA variables. e.g.,
 
@@ -534,15 +534,15 @@ val memory_message_def = Datatype`
   | MemStore memory_message_store_args
   | MemCmpXchg memory_message_cmp_xchg_args
   | MemAtomicRMW memory_message_atomic_rmw_args
-  | MemFence memory_order ;
-  
+  | MemFence memory_order memdeps ;
+
   memory_message_load_args = <|
     addr: addr ;
     id : memreqid ;
     order : memory_order ;
     memdeps : memdeps
   |> ;
-  
+
   memory_message_store_args = <|
     addr: addr ;
     value : value ;
@@ -550,7 +550,7 @@ val memory_message_def = Datatype`
     order : memory_order ;
     memdeps : memdeps
   |> ;
-  
+
   memory_message_cmp_xchg_args = <|
     addr : addr ;
     id : memreqid ;
@@ -561,7 +561,7 @@ val memory_message_def = Datatype`
     desired : value ;
     memdeps : memdeps
   |> ;
-  
+
   memory_message_atomic_rmw_args = <|
     addr : addr ;
     id : memreqid ;
@@ -574,8 +574,7 @@ val memory_message_def = Datatype`
 
 val memory_message_resolve_def = Datatype`
   memory_message_resolve =
-  | ResolvedLoad value memreqid
+  | ResolvedLoad (value list) memreqid
 `
 
 val _ = export_theory();
-
