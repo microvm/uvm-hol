@@ -20,6 +20,7 @@ val _ = type_abbrev("int",     ``:num``)
 val _ = Datatype`
   value =
   | IntV num int
+  | RefV uvm_type addr
   | IRefV uvm_type addr
   | FloatV float32
   | DoubleV float64
@@ -27,8 +28,20 @@ val _ = Datatype`
   | StructV (value list)
   | ArrayV (value list)
   | HybridV (value list) (value list) *)
-  | VectorV (value list)
-  | FuncRefV fnname
+  | VectorV uvm_type (value list)
+  | FuncRefV funcsig fnname
+`
+
+val type_of_value_def = Define`
+  type_of_value (v : value) : uvm_type =
+    case v of
+    | IntV n _ => Int n
+    | RefV t _ => Ref t
+    | IRefV t _ => IRef t
+    | FloatV _ => Float
+    | DoubleV _ => Double
+    | VectorV t vs => Vector t (LENGTH vs)
+    | FuncRefV sig _ => FuncRef sig
 `
 
 val value_add_def = Define`
@@ -75,7 +88,7 @@ val get_iref_addr_def = Define`
 val get_funcref_fnname_def = Define`
   get_funcref_fnname (v : value) : (fnname or_error) =
     case v of
-    | FuncRefV n => return n
+    | FuncRefV _ n => return n
     | _ => type_error "expected funcref"
 `
 val _ = export_theory()
