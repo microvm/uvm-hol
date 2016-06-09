@@ -30,7 +30,7 @@ val _ = Datatype`
          the value from memory *)
     addrwr_map : num |-> addr ;
     pending_insts : register instruction set ;
-    mailbox : memory_message_resolve set ;
+    mailbox : memory_response set ;
     next_register_index : num ;
     next_memreqid : memreqid
   |>
@@ -379,17 +379,17 @@ val exec_terminst_def = Define`
 
 val thread_receive_def = Define`
   thread_receive (state : thread_state)
-                 (ms : memory_message_resolve)
+                 ((mid, vs) : memory_response)
                  : thread_state or_error =
-    case ms of
-    | ResolvedLoad vs mid =>
-        do
-          vars <- expect (FLOOKUP state.memreq_map mid)
-                         (state_error "invalid memreqid") ;
-          assert (LENGTH vars = LENGTH vs) ;
-          assert (DISJOINT (set vars) (FDOM state.registers)) ;
-          return (state with registers updated_by C $|++ ZIP (vars, vs))
-        od
+    do
+      vars <- expect (FLOOKUP state.memreq_map mid)
+                     (state_error "invalid memreqid") ;
+      assert (LENGTH vars = LENGTH vs)
+             (state_error "memory response arity mismatch") ;
+      assert (DISJOINT (set vars) (FDOM state.registers))
+             (state_error "attempt to re-assign to SSA variable") ;
+      return (state with registers updated_by C $|++ (ZIP (vars, vs)))
+    od
 `
 
 val (exec_rules, exec_ind, exec_cases) = Hol_reln`

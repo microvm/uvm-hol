@@ -528,7 +528,7 @@ val _ = type_abbrev("memdeps", ``:memreqid set``)
    performed. Because most of the messages have complicated argument lists,
    their arguments are defined as records.
 *)
-val memory_message_def = Datatype`
+val _ = Datatype`
   memory_message =
   | MemLoad memory_message_load_args
   | MemStore memory_message_store_args
@@ -572,9 +572,7 @@ val memory_message_def = Datatype`
   |>
 `
 
-val memory_message_resolve_def = Datatype`
-  memory_message_resolve =
-  | ResolvedLoad (value list) memreqid
-`
+val _ = type_abbrev("memory_response", ``:memreqid # value list``)
 
-val _ = export_theory();
+val _ = export_theory()
+

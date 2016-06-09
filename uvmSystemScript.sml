@@ -87,8 +87,10 @@ val find_node_def = Define`
 `;
 
 val resolveM_def = Define`
-  resolveM R W : memory_message_resolve MSM =
-    λms. SuccessM(ResolvedLoad (THE W.values) R.mid, ms with g updated_by (λgr. gr with rf updated_by (λr. r|+(R,W))))
+  resolveM R W : memory_response MSM =
+    λms. SuccessM (
+      (R.mid, [THE W.values]),
+      ms with g updated_by (λgr. gr with rf updated_by (λr. r|+(R,W))))
 `;
 
 val list_update_def = Define`
