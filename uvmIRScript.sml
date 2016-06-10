@@ -136,9 +136,9 @@ val _ = type_abbrev("typename", ``:string``)
 val _ = type_abbrev("signame", ``:string``)
 
 (* Either a variable or a constant *)
-val _ = type_abbrev("or_const", ``:α + value``)
-val _ = overload_on("Var", ``INL : α -> α or_const``)
-val _ = overload_on("Const", ``INR : value -> α or_const``)
+val _ = type_abbrev("or_const", ``:σ + value``)
+val _ = overload_on("Var", ``INL : σ -> σ or_const``)
+val _ = overload_on("Const", ``INR : value -> σ or_const``)
 
 (* Either a variable or a $-notation return value index
 
@@ -147,17 +147,17 @@ val _ = overload_on("Const", ``INR : value -> α or_const``)
 
        CALL m(...args...) EXC(%ndbl(%x, $2) %hbl($1, %a))
 *)
-val _ = type_abbrev("destarg", ``:α or_const + num``)
-val _ = overload_on("PassVar", ``INL : α or_const -> α destarg``)
-val _ = overload_on("PassReturnVal", ``INR : num -> α destarg``)
+val _ = type_abbrev("destarg", ``:σ or_const + num``)
+val _ = overload_on("PassVar", ``INL : σ or_const -> σ destarg``)
+val _ = overload_on("PassReturnVal", ``INR : num -> σ destarg``)
 
 (* A block label with arguments *)
-val _ = type_abbrev("destination", ``:block_label # α destarg list``)
+val _ = type_abbrev("destination", ``:block_label # σ destarg list``)
 
 val _ = Datatype`
   resumption_data = <|
-    normal_dest : α destination ;
-    exceptional_dest : α destination
+    normal_dest : σ destination ;
+    exceptional_dest : σ destination
   |>
 `
 
@@ -171,8 +171,8 @@ val _ = Datatype`
 
 val _ = Datatype`
   calldata = <|
-    name : α + fnname ;  (* allowing for indirect calls *)
-    args : α or_const list ;
+    name : σ + fnname ;  (* allowing for indirect calls *)
+    args : σ or_const list ;
     convention : callconvention
   |>
 `
@@ -195,132 +195,236 @@ val _ = Datatype`
   | RMW_UMIN (* <int> - unsigned min *)
 `
 
-(* All instruction types are generic in their SSA variable type. For example, a
-   `ssavar instruction` is a normal instruction (as per the spec), whereas a
-   `num instruction` would use natural numbers to identify variables. The same
-   applies to `expression`, `calldata`, etc.
-*)
-
 (* Type for expressions, instructions which do not contain a reference to their
-   output variable(s). Note that the α type of an expression should allow for
-   literal constants; that is, the expression type contained in an
-   `α instruction` is an `(α or_const) expression`.
+   output variable(s).
+
+   Type variables:
+   'ssa - SSA variable type
+   'ty  - Type parameter type
+   
+   Note that the σ type of an expression should allow for literal constants;
+   that is, the expression type contained in a `(σ, τ) instruction` is a
+   `(σ or_const, τ) expression`.
 *)
 val _ = Datatype`
   expression =
-  | Id α
-       (* no-op identity expr, yields its argument *)
-  | BinOp bin_op α α
-       (* performs arithmetic, yields a value *)
-  | New uvm_type (* must not be hybrid *)
-       (* yields a reference of type uvm_type *)
-  | AllocA uvm_type (* must not be hybrid *)
-       (* yields an iref to the type uvm_type *)
-  | NewHybrid uvm_type  (* must be a hybrid type *)
-              α (* length of varying part (can be zero);
-                   will cause u.b., or raise exn if
-                   GetVarPartIRef call is made on return value *)
-       (* yields ref *)
-  | AllocAHybrid uvm_type α
-       (* as above, but returns iref *)
-  | NewStack α (* function reference *)
-       (* yields stack reference *)
-  | NewThread α (* stack id *)
-              (α list) (* args for resumption point *)
-       (* yields thread reference *)
-  | NewThreadExn α (* stack id *)
-                 α (* exception value *)
-       (* yields thread reference (thread resumes with exceptional value) *)
-  | NewFrameCursor α (* stack id *)
-       (* yields frame cursor *)
-    (* stack manipulation API to be expanded *)
-  | GetIRef α (* ref *)
-       (* yields corresponding iref *)
-  | GetFieldIRef α (* iref / ptr *)
-                 num  (* field index *)
-       (* yields iref/ptr *)
-  | GetElementIRef α (* iref / ptr to array type *)
-                   α (* array index *)
-       (* yields iref/ptr *)
-  | ShiftIRef α (* iref/ptr to anything (not void) *)
-              α (* offset *)
-       (* yields iref/ptr *)
-  | GetVarPartIRef α (* iref/ptr to hybrid *)
-       (* yields iref/ptr to first element of var-part of hybrid IF IT EXISTS *)
-`
 
-(* Type for non-terminal instructions. Use `Assign` to create an
-   `α instruction` from an `(α or_const) expression`.
-*)
-val _ = Datatype`
-  instruction =
-  | Assign (α list) (* destination variable(s) *)
-           (α or_const expression) (*  *)
-  | Load α (* destination variable  *)
-         bool (* T for iref, F for ptr *)
-         α (* source memory address *)
-         memory_order
-  | Store (α or_const) (* value to be written *)
-          bool (* T for iref, F for ptr *)
-          α (* destination memory address *)
-          memory_order
-  | CmpXchg α (* output1 : oldvalue *)
-            α (* output2 : boolean for whether compare succeeded *)
-            bool (* T for iref, F for ptr *)
-            bool (* T for strong, F for weak *)
-            memory_order (* success order *)
-            memory_order (* failure order *)
-            α (* memory location *)
-            (α or_const) (* expected value *)
-            (α or_const) (* desired value *)
-  | AtomicRMW α (* output: old memory value *)
-              bool (* T for iref, F for ptr *)
-              memory_order
-              atomicrmw_op
-              α (* memory location *)
-              (α or_const) (* operand for op *)
-  | Fence memory_order
+  (* Basic Operations *)
+
+  | Id (* no-op identity expr, yields its argument *)
+      'ty  (* type of argument *)
+      'ssa (* argument *)
+  | BinOp (* performs arithmetic, yields a value *)
+      bin_op (* operation to perform *)
+      'ty  (* type of both operands *)
+      'ssa (* op1 *)
+      'ssa (* op2 *)
+  | CmpOp (* performs a comparison, yields an int<1> (or a vector) *)
+      cmp_op (* operation to perform *)
+      'ty  (* type of both operands *)
+      'ssa (* op1 *)
+      'ssa (* op2 *)
+  | ConvOp (* converts between two types *)
+      convtype (* operation to perform *)
+      'ty  (* source type *)
+      'ty  (* destination type *)
+      'ssa (* operand *)
+  | Select (* Given a boolean (int<1>), select one of two values *)
+      'ty  (* cond type *)
+      'ty  (* ifTrue, ifFalse type *)
+      'ssa (* cond *)
+      'ssa (* ifTrue *)
+      'ssa (* ifFalse *)
+
+  (* Aggregate Type Operations *)
+
+  | ExtractValue (* get field from struct in SSA var *)
+      'ty  (* type of opnd, should be struct *)
+      num  (* field index *)
+      'ssa (* opnd - struct *)
+  | InsertValue (* set field in struct in SSA var *)
+      'ty  (* type of opnd, should be struct *)
+      num  (* field index *)
+      'ssa (* opnd - struct to insert into *)
+      'ssa (* value to insert into struct *)
+  | ExtractElement (* get element from array/vector in SSA var *)
+      'ty  (* type of opnd, should be array/vector *)
+      'ty  (* type of index, should be int *)
+      'ssa (* opnd - array/vector *)
+      'ssa (* index *)
+  | InsertElement (* set element in array/vector in SSA var *)
+      'ty  (* type of opnd, should be array/vector *)
+      'ty  (* type of index, should be int *)
+      'ssa (* opnd - array/vector *)
+      'ssa (* index *)
+      'ssa (* value to insert *)
+  | ShuffleVector (* mix two vectors according to a mask *)
+      'ty  (* type of opnd, should be vector *)
+      'ty  (* type of mask, should be vector of any int type *)
+      'ssa (* vec1 *)
+      'ssa (* vec2 *)
+      'ssa (* mask *)
+
+  (* Memory Allocation *)
+
+  | New (* heap allocate new object, yields ref *)
+      'ty (* type - must not be hybrid *)
+  | Alloca (* stack allocate new object, yields iref *)
+      'ty
+  | NewHybrid (* heap allocate new hybrid object, yields ref *)
+      'ty  (* hybrid type *)
+      'ty  (* length type *)
+      'ssa (* length of varying part (can be zero);
+              will cause u.b., or raise exn if
+              GetVarPartIRef call is made on return value *)
+  | AllocaHybrid (* stack allocate new hybrid object, yields iref *)
+      'ty
+      'ty
+      'ssa
+
+  (* Memory Addressing *)
+
+  | GetIRef (* convert a ref into an iref *)
+      'ty  (* referent type of opnd *)
+      'ssa (* opnd, should be a ref *)
+  | GetFieldIRef (* move iref to struct/hybrid field *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of opnd - should be struct or hybrid *)
+      num  (* field index *)
+      'ssa (* opnd - iref/ptr *)
+  | GetElementIRef (* move iref to array element *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of opnd - should be array *)
+      'ty  (* index type - should be int *)
+      'ssa (* opnd - iref/ptr *)
+      'ssa (* index *)
+  | ShiftIRef (* move iref by specific offset, yields same iref type *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of opnd *)
+      'ty  (* offset type - should be int *)
+      'ssa (* opnd - iref/ptr *)
+      'ssa (* offset *)
+  | GetVarPartIRef (* yields iref/ptr to first element of var-part of hybrid, if it exists *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of opnd - should be hybrid *)
+      'ssa (* opnd - iref/ptr *)
 `
 
 val _ = type_abbrev("wpid", ``:num``)
 
+(* Types for instructions, both normal and terminal. Use `Assign` to create a
+   `(σ, τ) instruction` from a `(σ or_const, τ) expression`.
+
+   Type variables:
+   'ssa - SSA variable type
+   'ty  - Type parameter type
+*)
 val _ = Datatype`
+  instruction =
+  | Assign 
+      ('ssa list) (* output variable(s) *)
+      (('ssa or_const, 'ty) expression)
+  | Load
+      'ssa (* destination variable  *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of source *)
+      'ssa (* source - iref/uptr *)
+      memory_order
+  | Store
+      ('ssa or_const) (* value to be written *)
+      bool (* T for iref, F for ptr *)
+      'ty  (* referent type of destination *)
+      'ssa (* destination - iref/uptr *)
+      memory_order
+  | CmpXchg
+      'ssa (* output1 : oldvalue *)
+      'ssa (* output2 : boolean for whether compare succeeded *)
+      bool (* T for iref, F for ptr *)
+      bool (* T for strong, F for weak *)
+      memory_order (* success order *)
+      memory_order (* failure order *)
+      'ty  (* referent type of location *)
+      'ssa (* memory location - iref/uptr *)
+      ('ssa or_const) (* expected value *)
+      ('ssa or_const) (* desired value *)
+  | AtomicRMW
+      'ssa (* output: old memory value *)
+      bool (* T for iref, F for ptr *)
+      memory_order
+      atomicrmw_op
+      'ty  (* referent type of location*)
+      'ssa (* memory location - iref/uptr *)
+      ('ssa or_const) (* operand for op *)
+  | Fence memory_order
+  | NewThread
+      'ssa (* output: threadref *)
+      ('ssa option) (* threadlocal *)
+      (('ssa, 'ty) new_stack_clause)
+  | CommInst
+      ('ssa list) (* output variable(s) *)
+      (('ssa, 'ty) comm_inst_args) ;
+
   terminst =
-  | Return (α or_const list)
-  | ThreadExit
-  | Throw (α or_const list)
-  | TailCall (α calldata)
-  | Branch1 (α destination)
-  | Branch2 (α or_const) (α destination) (α destination)
+  | Ret ('ssa or_const list)
+  | Throw ('ssa or_const list)
+  | Call ('ssa calldata) ('ssa resumption_data)
+  | TailCall ('ssa calldata)
+  | Branch1 ('ssa destination)
+  | Branch2 ('ssa or_const) ('ssa destination) ('ssa destination)
+  | Switch
+      'ty
+      ('ssa or_const)
+      ('ssa destination)
+      (value |-> 'ssa destination)
   | Watchpoint
-      ((wpid # α destination) option)
+      ((wpid # 'ssa destination) option)
          (* NONE = unconditional trap *)
          (* SOME(wpid, dest) = conditional on wpid, trap if set;
                                if not, branch to dest *)
-      (α resumption_data)
-  | WPBranch wpid (α destination) (α destination)
-  | Call (α calldata) (α resumption_data)
-  | Swapstack
-      α (* stackID *)
-      bool (* T if exception values are being transferred *)
-      (α or_const list) (* parameters *)
-      (α resumption_data)
-  | Switch (α or_const) (α destination) (value |-> α destination)
-  | ExnInstruction (α instruction) (α resumption_data)
+      ('ty list) (* return types *)
+      ('ssa resumption_data)
+  | WPBranch wpid ('ssa destination) ('ssa destination)
+  | SwapStack
+      'ssa (* swappee - stackref *)
+      (('ssa, 'ty) new_stack_clause)
+      ('ty cur_stack_clause)
+      ('ssa resumption_data)
+  | TermCommInst
+      (('ssa, 'ty) comm_inst_args)
+      ('ssa resumption_data)
+  | ExcClause
+      (('ssa, 'ty) instruction)
+      ('ssa resumption_data) ;
+
+  (* Wrapping expressions with ExcClause forces the implementation to
+     gracefully handle what would have otherwise been undefined
+     behaviour. For example, an unwrapped division lets demons fly out
+     of your nose if the second argument is 0. On the other hand, if the
+     client wraps a division with resumption_data, the implementation
+     must check for the zero argument and/or set up the appropriate
+     signal handling so that the exceptional branch can get called when
+     the second argument is indeed 0.
+  *)
+
+  comm_inst_args = <|
+    inst : string ;
+    flag_list : string list ;
+    type_list : 'ty list ;
+    func_sig_list : signame list ;
+    arg_list : 'ssa list
+  |> ;
+
+  new_stack_clause =
+  | PassValues (('ssa # 'ty) list)
+  | ThrowExc 'ssa ;
+
+  cur_stack_clause =
+  | RetWith ('ty list)
+  | KillOld
 `
 
-(* Wrapping expressions with ExnInstruction forces the implementation
-   to gracefully handle what would have otherwise been undefined
-   behaviour. For example, an unwrapped division lets demons fly out
-   of your nose if the second argument is 0. On the other hand, if the
-   client wraps a division with resumption_data, the implementation
-   must check for the zero argument and/or set up the appropriate
-   signal handling so that the exceptional branch can get called when
-   the second argument is indeed 0.
-*)
-
 (* Map functions: map the SSA variables in expressions, instructions, etc. to
-   new SSA variable types. Each maps from an `α foo` to a `β foo`.
+   new SSA variable types. Each maps from an `(α, τ) foo` to a `(β, τ) foo`.
 *)
 
 val map_calldata_def = Define`
@@ -332,87 +436,129 @@ val map_calldata_def = Define`
 `
 
 val map_expr_def = Define`
-  map_expr (f : α -> β) (expr : α expression) : β expression =
+  map_expr (vf : α -> β)
+           (tf : γ -> δ)
+           (expr : (α, γ) expression)
+           : (β, δ) expression =
     case expr of
-    | Id v => Id (f v)
-    | BinOp op a b => BinOp op (f a) (f b)
-    | New t => New t
-    | AllocA t => AllocA t
-    | NewHybrid t len => NewHybrid t (f len)
-    | AllocAHybrid t len => AllocAHybrid t (f len)
-    | NewStack fn => NewStack (f fn)
-    | NewThread stack args => NewThread (f stack) (MAP f args)
-    | NewThreadExn stack exn => NewThreadExn (f stack) (f exn)
-    | NewFrameCursor stack => NewFrameCursor (f stack)
-    | GetIRef ref => GetIRef (f ref)
-    | GetFieldIRef ref n => GetFieldIRef (f ref) n
-    | GetElementIRef ref index => GetElementIRef (f ref) (f index)
-    | ShiftIRef ref offset => ShiftIRef (f ref) (f offset)
-    | GetVarPartIRef ref => GetVarPartIRef (f ref)
+    | Id t v => Id (tf t) (vf v)
+    | BinOp op t a b => BinOp op (tf t) (vf a) (vf b)
+    | CmpOp op t a b => CmpOp op (tf t) (vf a) (vf b)
+    | ConvOp op t1 t2 x => ConvOp op (tf t1) (tf t2) (vf x)
+    | Select t1 t2 c a b => Select (tf t1) (tf t2) (vf c) (vf a) (vf b)
+
+    | ExtractValue t n s => ExtractValue (tf t) n (vf s)
+    | InsertValue t n s v => InsertValue (tf t) n (vf s) (vf v)
+    | ExtractElement t1 t2 a i => ExtractElement (tf t1) (tf t2) (vf a) (vf i)
+    | InsertElement t1 t2 a i v =>
+        InsertElement (tf t1) (tf t2) (vf a) (vf i) (vf v)
+    | ShuffleVector t1 t2 v1 v2 m =>
+        ShuffleVector (tf t1) (tf t2) (vf v1) (vf v2) (vf m)
+
+    | New t => New (tf t)
+    | Alloca t => Alloca (tf t)
+    | NewHybrid t1 t2 len => NewHybrid (tf t1) (tf t2) (vf len)
+    | AllocaHybrid t1 t2 len => AllocaHybrid (tf t1) (tf t2) (vf len)
+
+    | GetIRef t ref => GetIRef (tf t) (vf ref)
+    | GetFieldIRef p t n ref => GetFieldIRef p (tf t) n (vf ref)
+    | GetElementIRef p t1 t2 ref index =>
+        GetElementIRef p (tf t1) (tf t2) (vf ref) (vf index)
+    | ShiftIRef p t1 t2 ref offset =>
+        ShiftIRef p (tf t1) (tf t2) (vf ref) (vf offset)
+    | GetVarPartIRef p t ref => GetVarPartIRef p (tf t) (vf ref)
 `
 
 val map_inst_def = Define`
-  map_inst (f : α -> β) (inst : α instruction) : β instruction =
+  map_inst (vf : α -> β)
+           (tf : γ -> δ)
+           (inst : (α, γ) instruction)
+           : (β, δ) instruction =
     case inst of
-    | Assign v e => Assign (MAP f v) (map_expr (lift_left f) e)
-    | Load v ptr src ord => Load (f v) ptr (f src) ord
-    | Store src ptr dst ord => Store (lift_left f src) ptr (f dst) ord
-    | CmpXchg v1 v2 ptr weak sord ford loc exp des =>
-        CmpXchg (f v1) (f v2) ptr weak sord ford (f loc) (lift_left f exp) (lift_left f des)
-    | AtomicRMW v ptr ord op loc opnd =>
-        AtomicRMW (f v) ptr ord op (f loc) (lift_left f opnd)
+    | Assign vs e => Assign (MAP vf vs) (map_expr (lift_left vf) tf e)
+    | Load v p t src ord => Load (vf v) p (tf t) (vf src) ord
+    | Store src p t dst ord => Store (lift_left vf src) p (tf t) (vf dst) ord
+    | CmpXchg v1 v2 p w sord ford t loc exp des =>
+        CmpXchg (vf v1) (vf v2) p w sord ford (tf t) (vf loc)
+                (lift_left vf exp) (lift_left vf des)
+    | AtomicRMW v p ord op t loc opnd =>
+        AtomicRMW (vf v) p ord op (tf t) (vf loc) (lift_left vf opnd)
     | Fence ord => Fence ord
+    | NewThread v tl nsc =>
+        NewThread (vf v) (OPTION_MAP vf tl) (
+          case nsc of
+          | PassValues vs => PassValues (MAP (vf ## tf) vs)
+          | ThrowExc e => ThrowExc (vf e))
+    (* TODO: CommInst *)
 `
 
 val map_terminst_def = Define`
-  map_terminst (f : α -> β) (inst : α terminst) : β terminst =
+  map_terminst (vf : α -> β)
+               (tf : γ -> δ)
+               (inst : (α, γ) terminst)
+               : (β, δ) terminst =
     let map_dest : α destination -> β destination =
-      I ## (MAP o lift_left o lift_left) f in
+      I ## (MAP o lift_left o lift_left) vf in
     let map_rd : α resumption_data -> β resumption_data =
       λrd. <|
          normal_dest := map_dest rd.normal_dest ;
          exceptional_dest := map_dest rd.exceptional_dest
        |> in
     case inst of
-    | Return vals => Return (MAP (lift_left f) vals)
-    | ThreadExit => ThreadExit
-    | Throw vals => Throw (MAP (lift_left f) vals)
-    | TailCall cd => TailCall (map_calldata f cd)
+    | Ret vals => Ret (MAP (lift_left vf) vals)
+    | Throw vals => Throw (MAP (lift_left vf) vals)
+    | Call cd rd => Call (map_calldata vf cd) (map_rd rd)
+    | TailCall cd => TailCall (map_calldata vf cd)
     | Branch1 dst => Branch1 (map_dest dst)
     | Branch2 cond dst1 dst2 =>
-        Branch2 (lift_left f cond) (map_dest dst1) (map_dest dst2)
-    | Watchpoint NONE rd => Watchpoint NONE (map_rd rd)
-    | Watchpoint (SOME (id, dst)) rd =>
-        Watchpoint (SOME (id, map_dest dst)) (map_rd rd)
+        Branch2 (lift_left vf cond) (map_dest dst1) (map_dest dst2)
+    | Switch t cond dst branches =>
+        Switch (tf t) (lift_left vf cond) (map_dest dst) (map_dest o_f branches)
+    | Watchpoint wpdst tys rd =>
+        Watchpoint (OPTION_MAP (I ## map_dest) wpdst) (MAP tf tys) (map_rd rd)
     | WPBranch id dst1 dst2 => WPBranch id (map_dest dst1) (map_dest dst2)
-    | Call cd rd => Call (map_calldata f cd) (map_rd rd)
-    | Swapstack stack_id exc params rd =>
-        Swapstack (f stack_id) exc (MAP (lift_left f) params) (map_rd rd)
-    (* TODO: Implement map_terminst for Switch *)
-    | ExnInstruction inst rd => ExnInstruction (map_inst f inst) (map_rd rd)
+    | SwapStack v nsc csc rd =>
+        SwapStack (vf v) (
+          case nsc of
+          | PassValues vs => PassValues (MAP (vf ## tf) vs)
+          | ThrowExc e => ThrowExc (vf e)
+        ) (
+          case csc of
+          | RetWith tys => RetWith (MAP tf tys)
+          | KillOld => KillOld
+        ) (map_rd rd)
+    (* TODO: TermCommInst *)
+    | ExcClause inst rd => ExcClause (map_inst vf tf inst) (map_rd rd)
 `
 
 (* Given an expression, returns a set of all variables read by the expression
    (its _input variables_).
 *)
 val expr_vars_def = Define`
-  expr_vars (expr : α expression) : α set =
+  expr_vars (expr : (α, β) expression) : α set =
     case expr of
-    | Id v => {v}
-    | BinOp _ a b => {a; b}
+    | Id _ v => {v}
+    | BinOp _ _ a b => {a; b}
+    | CmpOp _ _ a b => {a; b}
+    | ConvOp _ _ _ v => {v}
+    | Select _ _ c t f => {c; t; f}
+
+    | ExtractValue _ _ s => {s}
+    | InsertValue _ _ s v => {s; v}
+    | ExtractElement _ _ a i => {a; i}
+    | InsertElement _ _ a i v => {a; i; v}
+    | ShuffleVector _ _ v1 v2 m => {v1; v2; m}
+
     | New _ => {}
-    | AllocA _ => {}
-    | NewHybrid _ len => {len}
-    | AllocAHybrid _ len => {len}
-    | NewStack fn => {fn}
-    | NewThread stack args => {stack} ∪ set args
-    | NewThreadExn stack exn => {stack; exn}
-    | NewFrameCursor stack => {stack}
-    | GetIRef ref => {ref}
-    | GetFieldIRef ref _ => {ref}
-    | GetElementIRef ref index => {ref; index}
-    | ShiftIRef ref offset => {ref; offset}
-    | GetVarPartIRef ref => {ref}
+    | Alloca _ => {}
+    | NewHybrid _ _ len => {len}
+    | AllocaHybrid _ _ len => {len}
+
+    | GetIRef _ ref => {ref}
+    | GetFieldIRef _ _ _ ref => {ref}
+    | GetElementIRef _ _ _ ref index => {ref; index}
+    | ShiftIRef _ _ _ ref offset => {ref; offset}
+    | GetVarPartIRef _ _ ref => {ref}
 `
 
 (* Given an instruction, returns a pair of sets (input variables, output
@@ -420,15 +566,22 @@ val expr_vars_def = Define`
    by the instruction.
 *)
 val inst_vars_def = Define`
-  inst_vars (inst : α instruction) : α set # α set =
+  inst_vars (inst : (α, β) instruction) : α set # α set =
     case inst of
     | Assign vs e => expr_vars e :> IMAGE left_set :> BIGUNION, set vs
-    | Load v _ src _ => {src}, {v}
-    | Store src _ dst _ => left_set src, {dst}
-    | CmpXchg v1 v2 _ _ _ _ loc exp des =>
+    | Load v _ _ src _ => {src}, {v}
+    | Store src _ _ dst _ => left_set src, {dst}
+    | CmpXchg v1 v2 _ _ _ _ _ loc exp des =>
         {loc} ∪ left_set exp ∪ left_set des, {v1; v2}
-    | AtomicRMW v _ _ _ loc opnd => {loc} ∪ left_set opnd, {v}
+    | AtomicRMW v _ _ _ _ loc opnd => {loc} ∪ left_set opnd, {v}
     | Fence _ => {}, {}
+    | NewThread v tl nsc =>
+      (case tl of SOME v' => {v'} | NONE => {}) ∪ (
+        case nsc of
+        | PassValues vs => set (MAP FST vs)
+        | ThrowExc e => {e}
+      ), {v}
+    | CommInst vs ci => set ci.arg_list, set vs
 `
 
 val inst_input_vars_def = Define`inst_input_vars i = FST (inst_vars i)`
@@ -447,29 +600,32 @@ val inst_all_vars_def = Define`inst_all_vars i = let (a, b) = inst_vars i in a �
    read.
 *)
 val terminst_vars_def = Define`
-  terminst_vars (inst : α terminst) : α set # α set =
+  terminst_vars (inst : (α, β) terminst) : α set # α set =
     let flat_left_set = λl. set l :> IMAGE left_set :> BIGUNION in
     let dest_vars : α destination -> α set =
       λ(_, args) v. MEM (PassVar (Var v)) args in
     let rd_vars : α resumption_data -> α set =
       λrd. dest_vars rd.normal_dest ∪ dest_vars rd.exceptional_dest in
     case inst of
-    | Return vals => {}, flat_left_set vals
-    | ThreadExit => {}, {}
+    | Ret vals => {}, flat_left_set vals
     | Throw vals => {}, flat_left_set vals
+    | Call cd rd => left_set cd.name, flat_left_set cd.args ∪ rd_vars rd
     | TailCall cd => left_set cd.name, flat_left_set cd.args
     | Branch1 dst => {}, dest_vars dst
     | Branch2 cond dst1 dst2 => left_set cond, dest_vars dst1 ∪ dest_vars dst2
-    | Watchpoint NONE rd => {}, rd_vars rd
-    | Watchpoint (SOME (id, dst)) rd => {}, dest_vars dst ∪ rd_vars rd
-    | WPBranch id dst1 dst2 => {}, dest_vars dst1 ∪ dest_vars dst2
-    | Call cd rd => left_set cd.name, flat_left_set cd.args ∪ rd_vars rd
-    | Swapstack stack_id exc params rd =>
-        {stack_id}, flat_left_set params ∪ rd_vars rd
-    | Switch param def_dst branches =>
-        left_set param,
+    | Switch _ cond def_dst branches =>
+        left_set cond,
         dest_vars def_dst ∪ λvr. ∃vl. vr ∈ dest_vars (branches ' vl)
-    | ExnInstruction inst rd => inst_input_vars inst, rd_vars rd
+    | Watchpoint NONE _ rd => {}, rd_vars rd
+    | Watchpoint (SOME (id, dst)) _ rd => {}, dest_vars dst ∪ rd_vars rd
+    | WPBranch id dst1 dst2 => {}, dest_vars dst1 ∪ dest_vars dst2
+    | SwapStack stack_id nsc _ rd =>
+        {stack_id}, (
+          case nsc of
+          | PassValues vs => set (MAP FST vs)
+          | ThrowExc e => {e}
+        ) ∪ rd_vars rd
+    | ExcClause inst rd => inst_input_vars inst, rd_vars rd
 `
 
 val terminst_input_vars_def = Define`terminst_input_vars i = FST (terminst_vars i)`
@@ -483,10 +639,10 @@ val terminst_all_vars_def = Define`terminst_all_vars i = let (a, b) = terminst_v
 *)
 val _ = Datatype`
   bblock = <|
-    args : (α # uvm_type) list ;
-    body : α instruction list ;
-    exit : α terminst ;
-    keepalives : α list
+    args : ('ssa # 'ty) list ;
+    body : ('ssa, 'ty) instruction list ;
+    exit : ('ssa, 'ty) terminst ;
+    keepalives : 'ssa list
   |>
 `
 
@@ -494,7 +650,7 @@ val _ = Datatype`
   function = <|
     signature : signame ;
     entry_block : block_label ;
-    blocks : block_label |-> ssavar bblock
+    blocks : block_label |-> (ssavar, uvm_type) bblock
   |>
 `
 

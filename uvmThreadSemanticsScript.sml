@@ -29,7 +29,7 @@ val _ = Datatype`
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
     addrwr_map : num |-> addr ;
-    pending_insts : register instruction set ;
+    pending_insts : (register, uvm_type) instruction set ;
     mailbox : memory_response set ;
     next_register_index : num ;
     next_memreqid : memreqid
@@ -39,10 +39,10 @@ val _ = Datatype`
 val _ = Datatype`
   running_thread = <|
     fn : function ;
-    block : register bblock ;
+    block : (register, uvm_type) bblock ;
     pc : num ;
     register_index : num ;
-    state: thread_state
+    state : thread_state
   |>
 `
 
@@ -50,7 +50,7 @@ val _ = Datatype`
    defined) in the thread state `state`.
 *)
 val is_ready_def = Define`
-  is_ready (state : thread_state) (i : register instruction) : bool ⇔
+  is_ready (state : thread_state) (i : (register, α) instruction) : bool ⇔
     inst_input_vars i ⊆ FDOM state.registers
 `
 
@@ -66,10 +66,11 @@ val at_block_end_def = Define`
    the program counter has reached the end of the block.
 *)
 val current_inst_def = Define`
-  current_inst (thread : running_thread) : register instruction or_error =
+  current_inst (thread : running_thread)
+               : (register, uvm_type) instruction or_error =
     if at_block_end thread
-      then state_error "no current instruction; program counter at end"
-      else return (EL thread.pc thread.block.body)
+    then state_error "no current instruction; program counter at end"
+    else return (EL thread.pc thread.block.body)
 `
 
 (* Returns the value of a variable or constant in a given state, or an error if
@@ -101,11 +102,11 @@ val eval_bop_def = Define`
 *)
 val eval_expr_def = Define`
   eval_expr (s : thread_state)
-            (e : register or_const expression)
+            (e : (register or_const, uvm_type) expression)
             : value list or_error =
     case e of
-    | Id v => lift_left (C CONS []) (get_value s v)
-    | BinOp bop v1 v2 =>
+    | Id _ v => lift_left (C CONS []) (get_value s v)
+    | BinOp bop _ v1 v2 =>
         do
           v1' <- get_value s v1 ;
           v2' <- get_value s v2 ;
@@ -119,7 +120,7 @@ val eval_expr_def = Define`
 *)
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
-            (inst : register instruction)
+            (inst : (register, uvm_type) instruction)
             : (running_thread # memory_message option) or_error =
     case inst of
     | Assign regs expr =>
@@ -133,7 +134,7 @@ val exec_inst_def = Define`
               (λs. s with registers updated_by C $|++ (ZIP (regs, values))),
             NONE)
         od
-    | Load destvar is_iref src mem_order =>
+    | Load destvar is_iref _ src mem_order =>
         do
           iref <- get_value thread.state (Var src) ;
           a <- get_iref_addr iref ;
@@ -149,7 +150,7 @@ val exec_inst_def = Define`
               memdeps := {} (* TODO : needs filling in *)
             |>))
         od
-    | Store srcvar is_iref destvar mem_order =>
+    | Store srcvar is_iref _ destvar mem_order =>
         do
           src_value <- get_value thread.state srcvar ;
           dest_iref <- get_value thread.state (Var destvar) ;
@@ -163,7 +164,7 @@ val exec_inst_def = Define`
               memdeps := {} (* TODO : needs filling in *)
             |>))
         od
-    | CmpXchg v1 v2 is_iref is_strong success_order failure_order loc exp des =>
+    | CmpXchg v1 v2 is_iref is_strong succ_order fail_order _ loc exp des =>
         do
           loc_iref <- get_value thread.state (Var loc) ;
           exp_value <- get_value thread.state exp ;
@@ -178,12 +179,12 @@ val exec_inst_def = Define`
             SOME (MemCmpXchg <|
               addr := a; id := thread.state.next_memreqid;
               expected := exp_value; desired := des_value;
-              success_order := success_order; failure_order := failure_order;
+              success_order := succ_order; failure_order := fail_order;
               is_strong := is_strong;
               memdeps := {} (* TODO : needs filling in *)
             |>))
         od
-    | AtomicRMW destvar is_iref mem_order op loc opnd =>
+    | AtomicRMW destvar is_iref mem_order op _ loc opnd =>
         do
           loc_iref <- get_value thread.state (Var loc) ;
           opnd_value <- get_value thread.state opnd ;
@@ -202,6 +203,7 @@ val exec_inst_def = Define`
         od
     | Fence mem_order => return (thread, SOME (MemFence mem_order {}))
         (* TODO : needs filling in *)
+    (* TODO: NewThread, CommInst *)
 `
 
 (* Enters a new basic block in the given thread and function, with the given
@@ -224,20 +226,24 @@ val enter_block_def = Define`
         (type_error "block arity mismatch");
 
       (* 2. Convert the block's SSA variables into registers. *)
-      let new_block : register bblock =
+      let new_block : (register, uvm_type) bblock =
         let reg = λv. (v, state.next_register_index) in
         <|
           args := MAP (reg ## I) block.args ;
-          body := MAP (map_inst reg) block.body ;
-          exit := map_terminst reg block.exit ;
+          body := MAP (map_inst reg I) block.body ;
+          exit := map_terminst reg I block.exit ;
           keepalives := MAP reg block.keepalives
         |> in
 
       (* 3. Add the resumption point arguments to the state. Constant values
             are inserted directly into thread.state.registers, while passed
             variables are converted into pending Assign instructions. *)
-      let new_pending : register instruction set =
-        FOLDR (λ((var, _), arg). $INSERT (Assign [var] (Id arg)))
+      let new_pending : (register, uvm_type) instruction set =
+        (* TODO: Something better than void for the type of the instruction.
+                 If types are checked in future versions of this theory, then
+                 something more sophisticated than pseudo-pending-instructions
+                 will be needed to pass variables between blocks. *)
+        FOLDR (λ((var, _), arg). $INSERT (Assign [var] (Id Void arg)))
               {}
               (ZIP (new_block.args, args)) in
 
@@ -323,7 +329,7 @@ val resume_thread_def = Define`
 val exec_terminst_def = Define`
   exec_terminst (env : environment)
                 (thread : running_thread)
-                (inst : register terminst)
+                (inst : (register, uvm_type) terminst)
                 : running_thread or_error =
     let no_returns : register destarg list -> register or_const list or_error =
       FOLDR (λdestarg args.
@@ -335,11 +341,14 @@ val exec_terminst_def = Define`
           return (hd::tl)
         od) (OK []) in
     case inst of
-    | Return vals => resume_thread thread.state T vals
-    | ThreadExit =>
-        (* TODO: Return something more sensible than Error for ThreadExit *)
-        undef_error "thread exited"
+    | Ret vals => resume_thread thread.state T vals
     | Throw vals => resume_thread thread.state F vals
+    | Call cd rd =>
+        enter_function env (thread.state with stack updated_by (CONS <|
+            fn := thread.fn ;
+            normal_resume := rd.normal_dest ;
+            exceptional_resume := SOME rd.exceptional_dest
+          |>)) cd
     | TailCall cd => enter_function env thread.state cd
     | Branch1 (lbl, destargs) =>
         do
@@ -357,13 +366,7 @@ val exec_terminst_def = Define`
           then enter_block thread.state thread.fn l1 args1
           else enter_block thread.state thread.fn l2 args2
         od
-    | Call cd rd =>
-        enter_function env (thread.state with stack updated_by (CONS <|
-            fn := thread.fn ;
-            normal_resume := rd.normal_dest ;
-            exceptional_resume := SOME rd.exceptional_dest
-          |>)) cd
-    | Switch param def_dst branches =>
+    | Switch _ param def_dst branches =>
         (* TODO: Branch speculation *)
         do
           param_value <- get_value thread.state param ;
@@ -374,7 +377,7 @@ val exec_terminst_def = Define`
           args <- no_returns destargs ;
           enter_block thread.state thread.fn lbl args
         od
-    (* TODO: Watchpoint, WPBranch, Swapstack, ExnInstruction *)
+    (* TODO: Watchpoint, WPBranch, SwapStack, TermCommInst, ExcClause *)
 `
 
 val thread_receive_def = Define`
