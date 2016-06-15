@@ -122,7 +122,7 @@ val (tracedtype_rules, tracedtype_ind, tracedtype_cases) = Hol_reln`
   ∧ tracedtype smap TagRef64
   ∧ (∀ty fixty varty.
       tracedtype smap ty ∧ ty ∈ set fixty
-    ⇒ 
+    ⇒
       tracedtype smap (Hybrid fixty varty))
   ∧ (∀fixty varty.
       tracedtype smap varty ⇒ tracedtype smap (Hybrid fixty varty))
@@ -144,7 +144,7 @@ val (native_safe_rules, native_safe_ind, native_safe_cases) = Hol_reln`
   ∧ (∀ty n. native_safe smap ty ⇒ native_safe smap (Array ty n))
   ∧ (∀ty. native_safe smap (UPtr ty))
   ∧ (∀sig. native_safe smap (UFuncPtr sig))
-  ∧ (∀fty vty. 
+  ∧ (∀fty vty.
       (∀ty. ty ∈ set fty ⇒ native_safe smap ty)
     ∧ native_safe smap vty
     ⇒
@@ -227,11 +227,15 @@ val native_safe_nottraced = store_thm(
   TRY (ntac 2 strip_tac >>
        simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC) >>
   TRY (ntac 3 strip_tac >>
-       simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC) >>
-  (* struct *)
-  ntac 2 strip_tac >>
-  dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
-  qcase_tac `MEM ty (sm ' tag)` >> Cases_on `MEM ty (sm ' tag)` >> simp[])
+       simp[Once native_safe_cases, Once tracedtype_cases] >> NO_TAC)
+  >- ((* hybrid *)
+      ntac 3 strip_tac >>
+      dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
+      metis_tac[])
+  >- ((* struct *)
+      ntac 2 strip_tac >>
+      dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
+      qcase_tac `MEM ty (sm ' tag)` >> Cases_on `MEM ty (sm ' tag)` >> simp[]))
 
 (* ----------------------------------------------------------------------
 
@@ -276,7 +280,7 @@ val (canconvert_rules, canconvert_ind, canconvert_cases) = Hol_reln`
   (* ptrcast cases *)
   ∧ (∀n ty.
       M.ptrsize = n
-    ⇒ 
+    ⇒
       canconvert M Smap BITCAST (Int n) (UPtr ty))
   ∧ (∀n ty.
       M.ptrsize = n (* tell KW *)
@@ -295,4 +299,3 @@ val (canconvert_rules, canconvert_ind, canconvert_cases) = Hol_reln`
 `
 
 val _ = export_theory()
-
