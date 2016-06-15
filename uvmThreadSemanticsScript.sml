@@ -40,7 +40,8 @@ val _ = Datatype`
   running_thread = <|
     fn : function ;
     block : (register, uvm_type) bblock ;
-    pc : num ;
+    pc : num ; (* TODO: encode possibility that we have stack-underflowed and
+                  may still be waiting for memory requests to come back *)
     register_index : num ;
     state : thread_state
   |>
