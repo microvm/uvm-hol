@@ -288,24 +288,24 @@ val _ = Datatype`
       'ty  (* referent type of opnd *)
       'ssa (* opnd, should be a ref *)
   | GetFieldIRef (* move iref to struct/hybrid field *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of opnd - should be struct or hybrid *)
       num  (* field index *)
       'ssa (* opnd - iref/ptr *)
   | GetElementIRef (* move iref to array element *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of opnd - should be array *)
       'ty  (* index type - should be int *)
       'ssa (* opnd - iref/ptr *)
       'ssa (* index *)
   | ShiftIRef (* move iref by specific offset, yields same iref type *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of opnd *)
       'ty  (* offset type - should be int *)
       'ssa (* opnd - iref/ptr *)
       'ssa (* offset *)
   | GetVarPartIRef (* yields iref/ptr to first element of var-part of hybrid, if it exists *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of opnd - should be hybrid *)
       'ssa (* opnd - iref/ptr *)
 `
@@ -326,20 +326,20 @@ val _ = Datatype`
       (('ssa or_const, 'ty) expression)
   | Load
       'ssa (* destination variable  *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of source *)
       'ssa (* source - iref/uptr *)
       memory_order
   | Store
       ('ssa or_const) (* value to be written *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       'ty  (* referent type of destination *)
       'ssa (* destination - iref/uptr *)
       memory_order
   | CmpXchg
       'ssa (* output1 : oldvalue *)
       'ssa (* output2 : boolean for whether compare succeeded *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       bool (* T for strong, F for weak *)
       memory_order (* success order *)
       memory_order (* failure order *)
@@ -349,7 +349,7 @@ val _ = Datatype`
       ('ssa or_const) (* desired value *)
   | AtomicRMW
       'ssa (* output: old memory value *)
-      bool (* T for iref, F for ptr *)
+      ref_type (* REF/PTR *)
       memory_order
       atomicrmw_op
       'ty  (* referent type of location*)

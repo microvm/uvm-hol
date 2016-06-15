@@ -1,7 +1,6 @@
 open HolKernel Parse boolLib bossLib;
 
 open uvmIRTheory
-open uvmErrorTheory
 open sumMonadTheory
 open lcsymtacs
 open monadsyntax
@@ -11,14 +10,6 @@ val _ = new_theory "uvmThreadSemantics"
 val _ = reveal "C" (* The C (flip) combinator is used in this theory *)
 
 val _ = type_abbrev("register", ``:ssavar # num``)
-
-val _ = Datatype`
-  suspended_frame = <|
-    fn : function ;
-    normal_resume : register destination ;
-    exceptional_resume : register destination option
-  |>
-`
 
 val _ = Datatype`
   thread_state = <|
@@ -33,18 +24,29 @@ val _ = Datatype`
     mailbox : memory_response set ;
     next_register_index : num ;
     next_memreqid : memreqid
-  |>
-`
+  |> ;
 
-val _ = Datatype`
   running_thread = <|
+    (* INL = thread is still executing code
+       INR = thread is done executing, is waiting on return/exception values *)
+    frame : running_frame + (resume_type # register or_const list) ;
+    state : thread_state
+  |> ;
+
+  running_frame = <|
     fn : function ;
     block : (register, uvm_type) bblock ;
-    pc : num ; (* TODO: encode possibility that we have stack-underflowed and
-                  may still be waiting for memory requests to come back *)
-    register_index : num ;
-    state : thread_state
-  |>
+    pc : num ;
+    register_index : num
+  |> ;
+
+  suspended_frame = <|
+    fn : function ;
+    normal_resume : register destination ;
+    exceptional_resume : register destination option
+  |> ;
+
+  resume_type = NOR | EXC
 `
 
 (* True if the instruction `i` is executable (all the variables it reads are
@@ -60,51 +62,53 @@ val is_ready_def = Define`
 *)
 val at_block_end_def = Define`
   at_block_end (thread : running_thread) : bool ⇔
-    LENGTH thread.block.body ≤ thread.pc
+    case thread.frame of
+    | INL frame => LENGTH frame.block.body ≤ frame.pc
+    | _ => T
 `
 
-(* The current instruction at the thread's program counter. Returns an error if
-   the program counter has reached the end of the block.
+(* The current instruction at the thread's program counter. Exit with an error
+   if the program counter has reached the end of the block.
 *)
 val current_inst_def = Define`
   current_inst (thread : running_thread)
-               : (register, uvm_type) instruction or_error =
+               : (register, uvm_type) instruction or_exit =
     if at_block_end thread
-    then state_error "no current instruction; program counter at end"
-    else return (EL thread.pc thread.block.body)
+    then fail InvalidState "no current instruction; program counter at end"
+    else let frame = OUTL thread.frame in return (EL frame.pc frame.block.body)
 `
 
-(* Returns the value of a variable or constant in a given state, or an error if
-   the variable is not yet available in the state.
+(* Returns the value of a variable or constant in a given state. Exits with an
+   error if the variable is not yet available in the state.
 *)
 val get_value_def = Define`
-  get_value (s : thread_state) (x : register or_const) : value or_error =
+  get_value (s : thread_state) (x : register or_const) : value or_exit =
     case x of
     | Var reg =>
-        expect (FLOOKUP s.registers reg)
-          (state_error "register value not yet available")
+        expect (FLOOKUP s.registers reg) InvalidState
+          "register value not yet available"
     | Const v => return v
 `
 
-(* Evaluates a binary operation, returning the values it produces. Returns an
+(* Evaluates a binary operation, returning the values it produces. Exits with an
    error if the values `v1`, `v2` are incorrectly typed or if the binary
    operation produces undefined behavior (such as division by zero).
 *)
 val eval_bop_def = Define`
-  eval_bop bop v1 v2 : value list or_error =
+  eval_bop bop v1 v2 : value list or_exit =
     case bop of
     | ADD => lift_left (C CONS []) (value_add v1 v2)
     | SDIV => lift_left (C CONS []) (value_div v1 v2)
 `
 
 (* Evaluates an expression in a given thread, returning the values it produces.
-   Returns an error if the expression is ill-typed or if it produces undefined
-   behavior (such as division by zero).
+   Exits with an error if the expression is ill-typed or if it produces
+   undefined behavior (such as division by zero).
 *)
 val eval_expr_def = Define`
   eval_expr (s : thread_state)
             (e : (register or_const, uvm_type) expression)
-            : value list or_error =
+            : value list or_exit =
     case e of
     | Id _ v => lift_left (C CONS []) (get_value s v)
     | BinOp bop _ v1 v2 =>
@@ -122,14 +126,15 @@ val eval_expr_def = Define`
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
             (inst : (register, uvm_type) instruction)
-            : (running_thread # memory_message option) or_error =
+            : (running_thread # memory_message option) or_exit =
     case inst of
     | Assign regs expr =>
         do
           values <- eval_expr thread.state expr ;
-          assert (LENGTH values = LENGTH regs) (undef_error "bad assign");
+          assert (LENGTH values = LENGTH regs)
+            TypeMismatch "arity mismatch in Assign" ;
           assert (DISJOINT (set regs) (FDOM thread.state.registers))
-                 (undef_error "register being reused") ;
+            InvalidState "register being reused" ;
           return (
             thread with state updated_by
               (λs. s with registers updated_by C $|++ (ZIP (regs, values))),
@@ -208,23 +213,23 @@ val exec_inst_def = Define`
 `
 
 (* Enters a new basic block in the given thread and function, with the given
-   arguments, creating a `running_thread` record. Returns an error if the block
-   label refers to a nonexistent block, or if the wrong number of arguments is
-   passed.
+   arguments, creating a `running_thread` record. Exits with an error if the
+   block label refers to a nonexistent block, or if the wrong number of
+   arguments is passed.
 *)
 val enter_block_def = Define`
   enter_block (state : thread_state)
               (fn : function)
               (label : block_label)
               (args : register or_const list)
-              : running_thread or_error =
+              : running_thread or_exit =
     do
       (* 1. Look up the block that the label refers to. *)
       block <- expect (FLOOKUP fn.blocks label)
-        (state_error ("no block named " ++ label));
+        InvalidState ("no block named " ++ label) ;
 
       assert (LENGTH args = LENGTH block.args)
-        (type_error "block arity mismatch");
+        TypeMismatch "block arity mismatch" ;
 
       (* 2. Convert the block's SSA variables into registers. *)
       let new_block : (register, uvm_type) bblock =
@@ -250,10 +255,12 @@ val enter_block_def = Define`
 
       (* 4. Construct a new running_thread record for the new state. *)
       return <|
-          fn := fn ;
-          block := new_block ;
-          pc := 0 ;
-          register_index := state.next_register_index ;
+          frame := INL <|
+            fn := fn ;
+            block := new_block ;
+            pc := 0 ;
+            register_index := state.next_register_index
+          |> ;
           state := state with <|
             pending_insts updated_by ($UNION new_pending) ;
             next_register_index updated_by SUC
@@ -270,17 +277,17 @@ val enter_function_def = Define`
   enter_function (env : environment)
                  (state : thread_state)
                  (cd : register calldata)
-                 : running_thread or_error =
+                 : running_thread or_exit =
     do
       fnname <- merge_right
           (λv. get_value state (Var v) >>= get_funcref_fnname)
           (lift_right return cd.name) ;
       version_opt <- expect (FLOOKUP env.func_versions fnname)
-        (state_error ("undeclared function: " ++ fnname)) ;
+        InvalidState ("undeclared function: " ++ fnname) ;
       (* TODO: Trap on undefined functions *)
-      version <- expect version_opt (undef_error "undefined function") ;
+      version <- expect version_opt UndefinedBehavior "undefined function" ;
       fn <- expect (FLOOKUP env.functions version)
-        (state_error "missing function version") ;
+        InvalidState "missing function version" ;
       enter_block state fn fn.entry_block cd.args
     od
 `
@@ -292,34 +299,30 @@ val enter_function_def = Define`
 *)
 val resume_thread_def = Define`
   resume_thread (state : thread_state)
-                (normal : bool) (* F if handling an exception *)
+                (res : resume_type)
                 (return_vals : register or_const list)
-                : running_thread or_error =
-    do
-      (frame, stack_tail) <-
-        case state.stack of
-        | next_sus_frame::rest => return (next_sus_frame, rest)
-        | [] => state_error "stack underflow" ;
-
-      (label, destargs) <-
-        if normal
-        then return frame.normal_resume
-        else expect frame.exceptional_resume
-               (state_error "no exceptional resumption point") ;
-
-      args <- FOLDR (λdestarg args.
+                : running_thread or_exit =
+    case state.stack of
+    | [] => return <| frame := INR (res, return_vals) ; state := state |>
+    | frame::stack_tail =>
         do
-          tl <- args ;
-          hd <- merge_left
-            (λn. assert (n < LENGTH return_vals)
-                   (state_error "return value index out of bounds")
-                 >> return (EL n return_vals))
-            (lift_left return destarg) ;
-          return (hd :: tl)
-        od) (OK []) destargs ;
-
-      enter_block (state with stack := stack_tail) frame.fn label args
-    od
+          (label, destargs) <-
+            case res of
+            | NOR => return frame.normal_resume
+            | EXC => expect frame.exceptional_resume
+                       InvalidState "no exceptional resumption point" ;
+          args <- FOLDR (λdestarg args.
+            do
+              tl <- args ;
+              hd <- merge_left
+                (λn. assert (n < LENGTH return_vals)
+                       InvalidState "return value index out of bounds"
+                     >> return (EL n return_vals))
+                (lift_left return destarg) ;
+              return (hd :: tl)
+            od) (Next []) destargs ;
+          enter_block (state with stack := stack_tail) frame.fn label args
+        od
 `
 
 (* Executes a terminal instruction in a given environment and thread, returning
@@ -331,52 +334,60 @@ val exec_terminst_def = Define`
   exec_terminst (env : environment)
                 (thread : running_thread)
                 (inst : (register, uvm_type) terminst)
-                : running_thread or_error =
-    let no_returns : register destarg list -> register or_const list or_error =
+                : running_thread or_exit =
+    let no_returns : register destarg list -> register or_const list or_exit =
       FOLDR (λdestarg args.
         do
           tl <- args ;
           hd <- case destarg of
                 | PassVar v => return v
-                | _ => state_error "return value in non-CALL instruction" ;
+                | _ => fail InvalidState "return value in non-CALL instruction" ;
           return (hd::tl)
-        od) (OK []) in
+        od) (Next []) in
+    let get_frame : running_frame or_exit =
+      lift_right
+        (K (ExitError InvalidState "branch from terminated thread"))
+        thread.frame in
     case inst of
-    | Ret vals => resume_thread thread.state T vals
-    | Throw vals => resume_thread thread.state F vals
+    | Ret vals => resume_thread thread.state NOR vals
+    | Throw vals => resume_thread thread.state EXC vals
     | Call cd rd =>
+        get_frame >>= λframe.
         enter_function env (thread.state with stack updated_by (CONS <|
-            fn := thread.fn ;
+            fn := frame.fn ;
             normal_resume := rd.normal_dest ;
             exceptional_resume := SOME rd.exceptional_dest
           |>)) cd
     | TailCall cd => enter_function env thread.state cd
     | Branch1 (lbl, destargs) =>
         do
+          frame <- get_frame ;
           args <- no_returns destargs ;
-          enter_block thread.state thread.fn lbl args
+          enter_block thread.state frame.fn lbl args
         od
     | Branch2 cond (l1, destargs1) (l2, destargs2) =>
         (* TODO: Branch speculation *)
         do
+          frame <- get_frame ;
           cond_value <- get_value thread.state cond ;
           cond_bool <- get_int1_as_bool cond_value ;
           args1 <- no_returns destargs1 ;
           args2 <- no_returns destargs2 ;
           if cond_bool
-          then enter_block thread.state thread.fn l1 args1
-          else enter_block thread.state thread.fn l2 args2
+          then enter_block thread.state frame.fn l1 args1
+          else enter_block thread.state frame.fn l2 args2
         od
     | Switch _ param def_dst branches =>
         (* TODO: Branch speculation *)
         do
+          frame <- get_frame ;
           param_value <- get_value thread.state param ;
           (lbl, destargs) <- return (
             case FLOOKUP branches param_value of
             | SOME dst => dst
             | NONE => def_dst) ;
           args <- no_returns destargs ;
-          enter_block thread.state thread.fn lbl args
+          enter_block thread.state frame.fn lbl args
         od
     (* TODO: Watchpoint, WPBranch, SwapStack, TermCommInst, ExcClause *)
 `
@@ -384,14 +395,14 @@ val exec_terminst_def = Define`
 val thread_receive_def = Define`
   thread_receive (state : thread_state)
                  ((mid, vs) : memory_response)
-                 : thread_state or_error =
+                 : thread_state or_exit =
     do
       vars <- expect (FLOOKUP state.memreq_map mid)
-                     (state_error "invalid memreqid") ;
+        InvalidState "invalid memreqid" ;
       assert (LENGTH vars = LENGTH vs)
-             (state_error "memory response arity mismatch") ;
+        InvalidState "memory response arity mismatch" ;
       assert (DISJOINT (set vars) (FDOM state.registers))
-             (state_error "attempt to re-assign to SSA variable") ;
+        InvalidState "attempt to re-assign to SSA variable" ;
       return (state with registers updated_by C $|++ (ZIP (vars, vs)))
     od
 `
@@ -408,13 +419,13 @@ val (exec_rules, exec_ind, exec_cases) = Hol_reln`
 
   ∧ (∀thread thread' inst.
       ¬at_block_end thread
-      ∧ OK inst = current_inst thread
+      ∧ Next inst = current_inst thread
       ∧ thread' = thread with <|
-          pc updated_by SUC ;
+          frame updated_by lift_left λf. (f with pc updated_by SUC) ;
           state updated_by λs. (s with pending_insts updated_by $INSERT inst)
         |>
     ⇒
-      exec thread (OK (thread', NONE)))
+      exec thread (Next (thread', NONE)))
 
   ∧ (∀thread msg.
       msg ∈ thread.state.mailbox
