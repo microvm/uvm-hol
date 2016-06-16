@@ -20,7 +20,7 @@ val _ = Datatype`
       (* maps load request ids to the ssa variable that is going to receive
          the value from memory *)
     addrwr_map : num |-> addr ;
-    pending_insts : (register, uvm_type) instruction set ;
+    pending_insts : register instruction set ;
     mailbox : memory_response set ;
     next_register_index : num ;
     next_memreqid : memreqid
@@ -35,7 +35,7 @@ val _ = Datatype`
 
   running_frame = <|
     fn : function ;
-    block : (register, uvm_type) bblock ;
+    block : register bblock ;
     pc : num ;
     register_index : num
   |> ;
@@ -53,7 +53,7 @@ val _ = Datatype`
    defined) in the thread state `state`.
 *)
 val is_ready_def = Define`
-  is_ready (state : thread_state) (i : (register, α) instruction) : bool ⇔
+  is_ready (state : thread_state) (i : register instruction) : bool ⇔
     inst_input_vars i ⊆ FDOM state.registers
 `
 
@@ -72,7 +72,7 @@ val at_block_end_def = Define`
 *)
 val current_inst_def = Define`
   current_inst (thread : running_thread)
-               : (register, uvm_type) instruction or_exit =
+               : register instruction or_exit =
     if at_block_end thread
     then fail InvalidState "no current instruction; program counter at end"
     else let frame = OUTL thread.frame in return (EL frame.pc frame.block.body)
@@ -107,7 +107,7 @@ val eval_bop_def = Define`
 *)
 val eval_expr_def = Define`
   eval_expr (s : thread_state)
-            (e : (register or_const, uvm_type) expression)
+            (e : register or_const expression)
             : value list or_exit =
     case e of
     | Id _ v => lift_left (C CONS []) (get_value s v)
@@ -125,7 +125,7 @@ val eval_expr_def = Define`
 *)
 val exec_inst_def = Define`
   exec_inst (thread : running_thread)
-            (inst : (register, uvm_type) instruction)
+            (inst : register instruction)
             : (running_thread # memory_message option) or_exit =
     case inst of
     | Assign regs expr =>
@@ -232,19 +232,19 @@ val enter_block_def = Define`
         TypeMismatch "block arity mismatch" ;
 
       (* 2. Convert the block's SSA variables into registers. *)
-      let new_block : (register, uvm_type) bblock =
+      let new_block : register bblock =
         let reg = λv. (v, state.next_register_index) in
         <|
           args := MAP (reg ## I) block.args ;
-          body := MAP (map_inst reg I) block.body ;
-          exit := map_terminst reg I block.exit ;
+          body := MAP (map_inst reg) block.body ;
+          exit := map_terminst reg block.exit ;
           keepalives := MAP reg block.keepalives
         |> in
 
       (* 3. Add the resumption point arguments to the state. Constant values
             are inserted directly into thread.state.registers, while passed
             variables are converted into pending Assign instructions. *)
-      let new_pending : (register, uvm_type) instruction set =
+      let new_pending : register instruction set =
         (* TODO: Something better than void for the type of the instruction.
                  If types are checked in future versions of this theory, then
                  something more sophisticated than pseudo-pending-instructions
@@ -333,7 +333,7 @@ val resume_thread_def = Define`
 val exec_terminst_def = Define`
   exec_terminst (env : environment)
                 (thread : running_thread)
-                (inst : (register, uvm_type) terminst)
+                (inst : register terminst)
                 : running_thread or_exit =
     let no_returns : register destarg list -> register or_const list or_exit =
       FOLDR (λdestarg args.

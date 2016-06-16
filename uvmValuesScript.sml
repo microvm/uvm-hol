@@ -20,7 +20,7 @@ val _ = Datatype`
   | DoubleV word64
   | ArrayV uvm_type (value list)
   | VectorV uvm_type (value list)
-  | StructV struct_id (value list)
+  | StructV ((value # uvm_type) list)
   | HybridV ((value # uvm_type) list) uvm_type (value list)
   | FuncRefV ref_type funcsig fnname ;
 
@@ -38,7 +38,7 @@ val type_of_value_def = Define`
     | DoubleV _ => Double
     | ArrayV t vs => Array t (LENGTH vs)
     | VectorV t vs => Vector t (LENGTH vs)
-    | StructV id _ => Struct id
+    | StructV vs => Struct (MAP (INL o SND) vs)
     | HybridV fvs vt _ => Hybrid (MAP SND fvs) vt
     | FuncRefV REF sig _ => FuncRef sig
     | FuncRefV PTR sig _ => UFuncPtr sig

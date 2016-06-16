@@ -6,7 +6,7 @@ local open stringTheory finite_mapTheory in end
 open lcsymtacs
 val _ = ParseExtras.tight_equality()
 
-val _ = type_abbrev ("struct_id", ``:string``)
+val _ = type_abbrev ("typename", ``:string``)
 
 val _ = Datatype`
   machine = <|
@@ -25,7 +25,7 @@ val _ = Datatype`
   | IRef uvm_type
   | WeakRef uvm_type
   | UPtr uvm_type
-  | Struct struct_id
+  | Struct ((uvm_type + typename) list)
   | Array uvm_type num
   | Hybrid (uvm_type list) uvm_type
   | Void
@@ -107,113 +107,142 @@ val maybe_vector_def = Define`
     P ty ∨ case ty of Vector ty0 _ => P ty0 | _ => F
 `
 
+(* Relation of type `(typename |-> uvm_type) -> uvm_type set` *)
 val (tracedtype_rules, tracedtype_ind, tracedtype_cases) = Hol_reln`
-    (∀ty. tracedtype smap (Ref ty))
-  ∧ (∀ty. tracedtype smap (IRef ty))
-  ∧ (∀ty. tracedtype smap (WeakRef ty))
+    (∀ty. tracedtype tmap (Ref ty))
+  ∧ (∀ty. tracedtype tmap (IRef ty))
+  ∧ (∀ty. tracedtype tmap (WeakRef ty))
   ∧ (∀sz ty.
-      tracedtype smap ty ⇒
-      tracedtype smap (Array ty sz))
+      tracedtype tmap ty ⇒
+      tracedtype tmap (Array ty sz))
   ∧ (∀sz ty.
-      tracedtype smap ty ⇒
-      tracedtype smap (Vector ty sz))
-  ∧ tracedtype smap ThreadRef
-  ∧ tracedtype smap StackRef
-  ∧ tracedtype smap TagRef64
-  ∧ (∀ty fixty varty.
-      tracedtype smap ty ∧ ty ∈ set fixty
+      tracedtype tmap ty ⇒
+      tracedtype tmap (Vector ty sz))
+  ∧ tracedtype tmap ThreadRef
+  ∧ tracedtype tmap StackRef
+  ∧ tracedtype tmap TagRef64
+  ∧ (∀ty fixtys varty.
+      tracedtype tmap ty ∧ MEM ty fixtys
     ⇒
-      tracedtype smap (Hybrid fixty varty))
-  ∧ (∀fixty varty.
-      tracedtype smap varty ⇒ tracedtype smap (Hybrid fixty varty))
-  ∧ (∀tag ty.
-      tag ∈ FDOM smap
-    ∧ tracedtype smap ty
-    ∧ MEM ty (smap ' tag)
+      tracedtype tmap (Hybrid fixtys varty))
+  ∧ (∀fixtys varty.
+      tracedtype tmap varty ⇒ tracedtype tmap (Hybrid fixtys varty))
+  ∧ (∀ty fields.
+      tracedtype tmap ty
+    ∧ MEM (INL ty) fields
     ⇒
-      tracedtype smap (Struct tag))
+      tracedtype tmap (Struct fields))
+  ∧ (∀ty_name ty fields.
+      SOME ty = FLOOKUP tmap ty_name
+    ∧ tracedtype tmap ty
+    ∧ MEM (INR ty_name) fields
+    ⇒
+      tracedtype tmap (Struct fields))
 `
 
-(* A native-safe type can be handed off to the "native" world. *)
+(* A native-safe type can be handed off to the "native" world.
+
+   Relation of type `(typename |-> uvm_type) -> uvm_type set`
+*)
 val (native_safe_rules, native_safe_ind, native_safe_cases) = Hol_reln`
-    (∀n. native_safe smap (Int n))
-  ∧ native_safe smap Float
-  ∧ native_safe smap Double
-  ∧ native_safe smap Void
-  ∧ (∀ty n. native_safe smap ty ⇒ native_safe smap (Vector ty n))
-  ∧ (∀ty n. native_safe smap ty ⇒ native_safe smap (Array ty n))
-  ∧ (∀ty. native_safe smap (UPtr ty))
-  ∧ (∀sig. native_safe smap (UFuncPtr sig))
-  ∧ (∀fty vty.
-      (∀ty. ty ∈ set fty ⇒ native_safe smap ty)
-    ∧ native_safe smap vty
+    (∀n. native_safe tmap (Int n))
+  ∧ native_safe tmap Float
+  ∧ native_safe tmap Double
+  ∧ native_safe tmap Void
+  ∧ (∀ty n. native_safe tmap ty ⇒ native_safe tmap (Vector ty n))
+  ∧ (∀ty n. native_safe tmap ty ⇒ native_safe tmap (Array ty n))
+  ∧ (∀ty. native_safe tmap (UPtr ty))
+  ∧ (∀sig. native_safe tmap (UFuncPtr sig))
+  ∧ (∀ftys vty.
+      (∀ty. MEM ty ftys ⇒ native_safe tmap ty)
+    ∧ native_safe tmap vty
     ⇒
-      native_safe smap (Hybrid fty vty))
-  ∧ (∀tag.
-      (∀ty. ty ∈ set (smap ' tag) ⇒ native_safe smap ty)
-    ∧ tag ∈ FDOM smap
+      native_safe tmap (Hybrid ftys vty))
+  ∧ (∀fields.
+      (∀ty. MEM (INL ty) fields ⇒ native_safe tmap ty)
+    ∧ (∀ty_name ty.
+        SOME ty = FLOOKUP tmap ty_name
+      ∧ MEM (INR ty_name) fields
+      ⇒
+        native_safe tmap ty)
     ⇒
-      native_safe smap (Struct tag))
+      native_safe tmap (Struct fields))
 `
 
+(* The set of well-formed types. The type of this relation is
+
+       (typename |-> uvm_type) ->
+       typename set ->
+       uvm_type set
+   
+   The first parameter is the global type name map (for recursively-defined
+   structs), and the second parameter is an accumulator of previously-followed
+   typenames (also for recursively-defined structs). The second parameter is
+   only used for recursion, and therefore should always be the empty set.
+*)
 val (wftype_rules, wftype_ind, wftype_cases) = Hol_reln`
     (∀vset n.
       0 < n
     ⇒
-      wftype smap vset (Int n))
-  ∧ (∀vset. wftype smap vset Float)
-  ∧ (∀vset. wftype smap vset Double)
-  ∧ (∀vset. wftype smap vset Void)
-  ∧ (∀vset. wftype smap vset ThreadRef)
-  ∧ (∀vset. wftype smap vset StackRef)
-  ∧ (∀vset. wftype smap vset TagRef64)
+      wftype tmap vset (Int n))
+  ∧ (∀vset. wftype tmap vset Float)
+  ∧ (∀vset. wftype tmap vset Double)
+  ∧ (∀vset. wftype tmap vset Void)
+  ∧ (∀vset. wftype tmap vset ThreadRef)
+  ∧ (∀vset. wftype tmap vset StackRef)
+  ∧ (∀vset. wftype tmap vset TagRef64)
   ∧ (∀vset ty.
-      wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
+      wftype tmap vset ty
     ⇒
-      wftype smap vset (Ref ty))
+      wftype tmap vset (Ref ty))
   ∧ (∀vset ty.
-      wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
+      wftype tmap vset ty
     ⇒
-      wftype smap vset (IRef ty))
+      wftype tmap vset (IRef ty))
   ∧ (∀vset ty.
-      wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
+      wftype tmap vset ty
     ⇒
-      wftype smap vset (WeakRef ty))
+      wftype tmap vset (WeakRef ty))
   ∧ (∀vset ty.
-      ¬tracedtype smap ty
-    ∧ wftype smap vset ty ∨ (∃tag. ty = Struct tag ∧ tag ∈ vset)
+      ¬tracedtype tmap ty
+    ∧ wftype tmap vset ty
     ⇒
-      wftype smap vset (UPtr ty))
+      wftype tmap vset (UPtr ty))
   ∧ (∀vset sig.
-      (∀ty. ty ∈ set sig.arg_types ⇒ wftype smap vset ty)
-    ∧ (∀ty. ty ∈ set sig.return_types ⇒ wftype smap vset ty)
+      (∀ty. MEM ty sig.arg_types ⇒ wftype tmap vset ty)
+    ∧ (∀ty. MEM ty sig.return_types ⇒ wftype tmap vset ty)
     ⇒
-      wftype smap vset (FuncRef sig))
+      wftype tmap vset (FuncRef sig))
   ∧ (∀vset sig.
-      (∀ty. ty ∈ set sig.arg_types ⇒ wftype smap vset ty)
-    ∧ (∀ty. ty ∈ set sig.return_types ⇒ wftype smap vset ty)
+      (∀ty. MEM ty sig.arg_types ⇒ wftype tmap vset ty)
+    ∧ (∀ty. MEM ty sig.return_types ⇒ wftype tmap vset ty)
     ⇒
-      wftype smap vset (UFuncPtr sig))
+      wftype tmap vset (UFuncPtr sig))
   ∧ (∀vset sz ty.
-      0 < sz ∧ wftype smap vset ty ∧ ty ≠ Void
+      0 < sz ∧ wftype tmap vset ty ∧ ty ≠ Void
     ⇒
-      wftype smap vset (Array ty sz))
+      wftype tmap vset (Array ty sz))
   ∧ (∀vset sz ty.
-      0 < sz ∧ wftype smap vset ty ∧ scalar_type ty
+      0 < sz ∧ wftype tmap vset ty ∧ scalar_type ty
     ⇒
-      wftype smap vset (Vector ty sz))
-  ∧ (∀vset fixty varty.
-      (∀ty. ty ∈ set fixty ⇒ wftype smap vset ty)
-    ∧ wftype smap vset varty
+      wftype tmap vset (Vector ty sz))
+  ∧ (∀vset fixtys varty.
+      (∀ty. MEM ty fixtys ⇒ wftype tmap vset ty)
+    ∧ wftype tmap vset varty
     ∧ varty ≠ Void
     ⇒
-      wftype smap vset (Hybrid fixty varty))
-  ∧ (∀vset tag.
-      tag ∈ FDOM smap
-    ∧ smap ' tag ≠ []
-    ∧ (∀ty. MEM ty (smap ' tag) ⇒ wftype smap (tag INSERT vset) ty ∧ ty ≠ Void)
+      wftype tmap vset (Hybrid fixtys varty))
+  ∧ (∀vset fields.
+      fields ≠ []
+    ∧ (∀ty. MEM (INL ty) fields ⇒ wftype tmap vset ty ∧ ty ≠ Void)
+    ∧ (∀ty_name ty.
+        MEM (INR ty_name) fields
+      ⇒
+        SOME ty = FLOOKUP tmap ty_name
+      ∧ ty ≠ Void
+      ∧ (ty_name ∈ vset ∨ wftype tmap (ty_name INSERT vset) ty))
     ⇒
-      wftype smap vset (Struct tag))
+      wftype tmap vset (Struct tag))
 `
 
 (* Note that FuncRefs are not native_safe, but are not traced either, so the
@@ -235,7 +264,7 @@ val native_safe_nottraced = store_thm(
   >- ((* struct *)
       ntac 2 strip_tac >>
       dsimp[Once native_safe_cases, Once tracedtype_cases] >> rpt strip_tac >>
-      qcase_tac `MEM ty (sm ' tag)` >> Cases_on `MEM ty (sm ' tag)` >> simp[]))
+      metis_tac[]))
 
 (* ----------------------------------------------------------------------
 
