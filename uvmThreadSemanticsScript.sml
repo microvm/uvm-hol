@@ -119,7 +119,7 @@ val eval_expr_def = Define`
         od
 `
 
-(* Generates a new running_thread state and a set of memory messages by
+(* Generates a new running_thread state and an optional memory message by
    executing an instruction. Note that this does *not* advance the program
    counter, as it may represent the execution of a queued instruction.
 *)
@@ -407,43 +407,92 @@ val thread_receive_def = Define`
     od
 `
 
-val (exec_rules, exec_ind, exec_cases) = Hol_reln`
-  (∀thread inst.
+(* Returns the appropriate exit state for a terminated thread with the given
+   "resumption type" (normal or exceptional) and return/exception value(s).
+*)
+val thread_exit_def = Define`
+  thread_exit (state : thread_state)
+              (res : resume_type)
+              (return_vals : register or_const list)
+              : exit_state =
+    merge_right (case res of NOR => ExitReturn | EXC => ExitThrow)
+      (FOLDR (λv accum. do
+        vs <- accum;
+        v' <- get_value state v;
+        return (v'::vs)
+      od) (Next []) return_vals)
+`
+
+(* `nondet_step` is a relation of type
+
+       environment ->
+       running_thread ->
+       (running_thread # memory_message option) or_exit set
+
+   That is, given an environment and a current thread state, produce either a
+   new thread state (possibly including an emitted memory message) or an exit
+   state (error or return value(s)). Because this execution is nondeterministic,
+   the return value is a set of possible next steps.
+*)
+val (nondet_step_rules, nondet_step_ind, nondet_step_cases) = Hol_reln`
+
+    (* If a thread has pending instructions whose arguments are available,
+       execute one of the instructions. *)
+    (∀env thread thread' inst.
       inst ∈ thread.state.pending_insts
-      ∧ is_ready thread.state inst
+    ∧ is_ready thread.state inst
+    ∧ thread' = thread with state updated_by
+        (λs. s with pending_insts updated_by C $DELETE inst)
     ⇒
-      exec thread
-           (exec_inst (thread with state updated_by λs.
-                         s with pending_insts updated_by C $DELETE inst)
-                      inst))
+      nondet_step env thread (exec_inst thread' inst))
 
-  ∧ (∀thread thread' inst.
+    (* If a thread's PC has not reached the end of its block, add the current
+       instruction to the pending set, then advance the PC. *)
+  ∧ (∀env thread thread' inst.
       ¬at_block_end thread
-      ∧ Next inst = current_inst thread
-      ∧ thread' = thread with <|
-          frame updated_by lift_left λf. (f with pc updated_by SUC) ;
-          state updated_by λs. (s with pending_insts updated_by $INSERT inst)
-        |>
+    ∧ Next inst = current_inst thread
+    ∧ thread' = thread with <|
+        frame updated_by lift_left λf. (f with pc updated_by SUC) ;
+        state updated_by λs. (s with pending_insts updated_by $INSERT inst)
+      |>
     ⇒
-      exec thread (Next (thread', NONE)))
+      nondet_step env thread (Next (thread', NONE)))
 
-  ∧ (∀thread msg.
+    (* If a thread's PC has reached the end of its block, and its terminal
+       instruction's arguments are available, execute its terminal instruction.
+    
+       TODO: This is where branch speculation should be added. The only input
+             variables a terminst can take are branch conditions (which can be
+             guessed) or function refs (which should probably be waited on,
+             though maybe those can be guessed too?).
+    *)
+  ∧ (∀env thread thread' frame.
+      at_block_end thread
+    ∧ INL frame = thread.frame
+    ∧ terminst_input_vars frame.block.exit ⊆ FDOM thread.state.registers
+    ∧ thread' = exec_terminst env thread frame.block.exit
+    ⇒
+      nondet_step env thread (thread' :> lift_left λt. (t, NONE)))
+
+    (* If a thread's mailbox contains a memory response, add the contents of
+       that response to the thread's registers. *)
+  ∧ (∀env thread msg next_step.
       msg ∈ thread.state.mailbox
+    ∧ next_step =
+        lift_left
+          (λs. (thread with state := (s with mailbox updated_by C $DELETE msg),
+                NONE))
+          (thread_receive thread.state msg)
     ⇒
-      exec thread (lift_left
-        (λs. (thread with state := (s with mailbox updated_by C $DELETE msg),
-              NONE))
-        (thread_receive thread.state msg)))
+      nondet_step env thread next_step)
 
-  (*
-    add a rule to allow blocks to finish and transfer,
-    including:
-      - unconditional branch (tailcall)
-      - tailcalls to other functions
-      - calls
-      - conditional branch (speculating through these will require
-        addition of boolean context information to the frame(?) state
-  *)
+    (* If a thread has terminated normally, and all of its return values are
+       available, transition to a return exit state. *)
+  ∧ (∀env thread exit_ty vs.
+      INR (exit_ty, vs) = thread.frame
+    ∧ (vs :> MAP left_set :> set :> BIGUNION) ⊆ FDOM thread.state.registers
+    ⇒
+      nondet_step env thread (Exit (thread_exit thread.state exit_ty vs)))
 `
 
 (*
@@ -485,3 +534,4 @@ which will be a disjunction of possible clauses.
 *)
 
 val _ = export_theory()
+
